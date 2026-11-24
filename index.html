@@ -2617,6 +2617,19 @@ html[data-theme="dark"] .graph-board .empty-lane-label-layer .empty-lane-name::b
 .graph-mode-active .upper-shell.graph-rail-integrated .graph-chapter-rail{pointer-events:auto;cursor:pointer;}
 .graph-rail-inspector-mark{position:absolute;left:0;right:0;border-right:2px solid #8cb8db;background:rgba(119,166,209,.13);pointer-events:none;z-index:0;}
 html[data-theme="light"] .graph-rail-inspector-mark{border-right-color:#527da4;background:rgba(82,125,164,.12);}
+
+/* Zmiana kolejności wątków: cel jest widoczny także nad przerwą. */
+[data-track-drag]{cursor:grab;}
+[data-track-drag].dragging{cursor:grabbing;opacity:.65;}
+[data-track-drag][contenteditable], [data-track-drag] .edit-input{cursor:text;}
+.track-head.track-reorder-before{box-shadow:-4px 0 0 #85bdeb;}
+.track-head.track-reorder-after{box-shadow:4px 0 0 #85bdeb;}
+.flip-title.track-reorder-before{box-shadow:0 -4px 0 #85bdeb;}
+.flip-title.track-reorder-after{box-shadow:0 4px 0 #85bdeb;}
+html[data-theme="light"] .track-head.track-reorder-before{box-shadow:-4px 0 0 #275c9a;}
+html[data-theme="light"] .track-head.track-reorder-after{box-shadow:4px 0 0 #275c9a;}
+html[data-theme="light"] .flip-title.track-reorder-before{box-shadow:0 -4px 0 #275c9a;}
+html[data-theme="light"] .flip-title.track-reorder-after{box-shadow:0 4px 0 #275c9a;}
 /* Wąski ekran: pionowe panele startują zwinięte, ale zachowują własne sterowanie.
    Szeroka plansza ma oddzielną szynę przewijania, zamiast wymuszać min-width na całej aplikacji. */
 @media(max-width:629px){
@@ -2784,7 +2797,7 @@ const GRAPH_LAYOUT_POLICY=Object.freeze({
  relationSlackWeight:1.25,wireSlackWeight:.09,
  compactIterations:65,compactStepThresholdPx:.015,compactCurrentWeight:.25,compactTargetWeight:.75
 });
-const APP_VERSION='2.1.11';
+const APP_VERSION='2.1.13';
 const APP_VERSION_DATE='2026-11-24';
 const THEME_STORAGE_KEY='drabinka-master-2-theme';
 let theme='dark';
@@ -5053,7 +5066,7 @@ function graphCameraTransition(action,payload=null){
    graphCamera.editPin=null;graphCamera.anchor=payload;graphCamera.revision++;break;
   case 'edit':
    graphCamera.editPin=payload;
-   graphCamera.anchor={id:payload.id,clientY:payload.clientY,passes:1,point:'top'};
+   graphCamera.anchor={id:payload.id,clientY:payload.clientY,passes:1,point:'top',allowTopBuffer:payload.allowTopBuffer};
    graphCamera.revision++;break;
   case 'release-edit':
    if(graphCamera.editPin?.id===payload){graphCamera.editPin=null;graphCamera.revision++}
@@ -5088,7 +5101,7 @@ function graphPinEditingTile(id){
  if(!node)return;
  if(graphCamera.editPin?.id!==id){
   // Kotwica tworzona PRZED focus i przed zwiększeniem wysokości edytora.
-  graphCamera.editPin={id,clientY:graphCamera.anchor?.id===id&&graphCamera.anchor.point==='top'?graphCamera.anchor.clientY:node.getBoundingClientRect().top};
+  graphCamera.editPin={id,clientY:graphCamera.anchor?.id===id&&graphCamera.anchor.point==='top'?graphCamera.anchor.clientY:node.getBoundingClientRect().top,allowTopBuffer:graphCamera.anchor?.id===id?graphCamera.anchor.allowTopBuffer!==false:true};
  }
  graphCameraTransition('edit',graphCamera.editPin);
 }
@@ -5121,7 +5134,7 @@ function graphPinNewTile(id,clientY=null){
  // przy tworzeniu z przycisku zachowujemy okolice środka widoku.
  const preferred=Number.isFinite(clientY)?clientY-30:view.top+Math.min(110,view.height*.35);
  const clientTop=Math.max(view.top+8,Math.min(view.bottom-70,preferred));
- graphCameraTransition('create',{id,clientY:clientTop,passes:2,point:'top'});
+ graphCameraTransition('create',{id,clientY:clientTop,passes:2,point:'top',allowTopBuffer:false});
 }
 function graphRestoreViewport(){
  const anchor=graphCamera.anchor;if(!anchor||!isGraphMode())return;
@@ -5139,11 +5152,19 @@ function graphRestoreViewport(){
  const actual=anchor.point==='top'?after.top:after.top+after.height/2;
  const shortfall=anchor.clientY-actual;
  if(shortfall>.8&&sc.scrollTop<.5&&graphCamera.editPin?.id===anchor.id){
+  // Tworzenie wydarzenia nie może odsuwać całej planszy od nagłówków.
+  // Gdy scroll osiągnął zero, przyjmujemy rzeczywisty top nowego kafelka
+  // zamiast tworzyć sztuczny margines i przesuwać istniejące wątki.
+  if(anchor.allowTopBuffer===false){
+   graphCamera.editPin.clientY=actual;
+   anchor.clientY=actual;
+  }else{
   const board=node.closest('.graph-board');
   if(board){
    graphCamera.topBuffer=Math.min(1600,graphCamera.topBuffer+shortfall);
    board.style.marginTop=graphCamera.topBuffer+'px';
    (0,__dmImports["40-graph-layout"].graphLayout)(board); // synchronizacja bannerów, pasów rozdziałów i ścieżek SVG
+  }
   }
  }
  if(--anchor.passes<=0)graphCameraTransition('release-anchor');
@@ -6688,6 +6709,7 @@ function graphAdd(trackId,beforeId=null,clientY=null){
    return;
   }
  }
+ graphCancelLinking();
  graphQueueMotion('add');
  graphPinNewTile(id,clientY);
  (0,__dmImports["50-ui-render"].render)();(0,__dmImports["50-ui-render"].editStart)('event',id);
@@ -7874,6 +7896,7 @@ if(localGridChapter&&previousGridCols===__dmImports["40-graph-layout"].gridCols&
 /* SIATKA: własny pointer drag pozwala używać kółka bez przerywania gestu.
    GRAF, etykiety i wątki zachowują dotychczasowy mechanizm. */
 if(!(0,__dmImports["20-motion-camera"].isGraphMode)())__dmImports["00-core"].root.querySelectorAll('.chapter .tile[data-event],.chapter-bar[data-ch-drag],.chapter-bar [data-ch-drag]').forEach(node=>node.draggable=false);
+__dmImports["00-core"].root.querySelectorAll('[data-track-drag]').forEach(node=>node.draggable=false);
 updateDockSearch();(0,__dmImports["00-core"].installTooltips)();(0,__dmImports["00-core"].syncFullscreenButton)();(0,__dmImports["40-graph-layout"].autoGrowDescriptions)();if(__dmImports["06-core-state"].toolbarMenuShouldReopen){(0,__dmImports["40-graph-layout"].setToolbarMenu)(true);__dmImports["06-core-state"].toolbarMenuShouldReopen=false;}if(__dmImports["06-core-state"].searchOpen)updateSearchResults();if(__dmImports["10-validation-storage"].trackFilterOpen)(0,__dmImports["10-validation-storage"].updateTrackFilterList)();if(__dmImports["06-core-state"].notesSearchOpen)(0,__dmImports["06-core-state"].updateNotesSearch)();const sc=__dmImports["00-core"].root.querySelector('.upper-scroll'),dc=__dmImports["00-core"].root.querySelector('.dock-scroll'),h=__dmImports["00-core"].root.querySelector('.h-rail');syncScrollbarSpace();sc.scrollTop=prevY;dc.scrollTop=prevDock;const notesList=__dmImports["00-core"].root.querySelector('.notes-list');if(notesList)notesList.scrollTop=prevNotesY;(0,__dmImports["40-graph-layout"].renderNotesOutline)();const notesOutline=__dmImports["00-core"].root.querySelector('.notes-outline');if(notesOutline)notesOutline.scrollTop=prevOutlineY;h.scrollLeft=prevX+(0,__dmImports["20-motion-camera"].horizontalScrollPadding)();syncH();if(horizontalAnchor){const node=__dmImports["00-core"].root.querySelector(horizontalAnchor.selector);if(node){const rect=node.getBoundingClientRect();h.scrollLeft+=rect.left+rect.width/2-horizontalAnchor.clientX;syncH()}}styleSelected();(0,__dmImports["40-graph-layout"].watchGridRailHeights)();(0,__dmImports["40-graph-layout"].scheduleGridRailPositions)();if((0,__dmImports["20-motion-camera"].isGraphMode)()){(0,__dmImports["20-motion-camera"].graphSyncChoice)();(0,__dmImports["20-motion-camera"].graphNavigatorSync)();requestAnimationFrame(()=>{if(generation!==__dmImports["40-graph-layout"].graphRenderGeneration)return;(0,__dmImports["40-graph-layout"].graphLayoutAll)(prevY);(0,__dmImports["20-motion-camera"].structureMotionFinish)(structureSnapshot)})}else{(0,__dmImports["20-motion-camera"].graphNavigatorSync)();requestAnimationFrame(()=>{if(generation!==__dmImports["40-graph-layout"].graphRenderGeneration)return;(0,__dmImports["20-motion-camera"].structureMotionFinish)(structureSnapshot)})}(0,__dmImports["10-validation-storage"].updateStorageStatus)();(0,__dmImports["09-storage-state"].saveOnChangedRender)();if(__dmImports["09-storage-state"].dbInitialized)(0,__dmImports["10-validation-storage"].saveViewPreferences)();(0,__dmImports["45-tutorial"].tutorialRefresh)();__dmImports["06-core-state"].context=null;if(prevMenu){/* menu zamyka się przy zmianie widoku */}}
 // Ten sam obserwator obsługuje zmiany wielkości okna oraz przeciąganie panelu ETYKIETY.
 // Nie modyfikuje modelu projektu i nie uruchamia jego zapisu.
@@ -9106,13 +9129,14 @@ let gridPointerPending=null,gridPointerActive=null,gridPointerGhost=null;
 let gridPointerOldUserSelect='';
 let gridPointerBlockClickUntil=0;
 function gridPointerDown(e){
- if(interactionDialog()||(0,__dmImports["20-motion-camera"].isGraphMode)()||e.button!==0||!e.isPrimary||e.pointerType==='touch')return;
+ if(interactionDialog()||e.button!==0||!e.isPrimary||e.pointerType==='touch')return;
  if(e.target.closest('button,input,select,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],.context-menu,.notes-panel'))return;
- const tile=e.target.closest('.chapter .tile[data-event]');
- const ch=tile?null:e.target.closest('.chapter-bar[data-ch-drag]');
- const source=tile||ch;
+ const track=e.target.closest('[data-track-drag]');
+ const tile=!track&&!(0,__dmImports["20-motion-camera"].isGraphMode)()?e.target.closest('.chapter .tile[data-event]'):null;
+ const ch=!track&&!tile&&!(0,__dmImports["20-motion-camera"].isGraphMode)()?e.target.closest('.chapter-bar[data-ch-drag]'):null;
+ const source=track||tile||ch;
  if(!source)return;
- gridPointerPending={kind:tile?'event':'chapter',id:tile?.dataset.event||ch?.dataset.chDrag,source,
+ gridPointerPending={kind:track?'track':tile?'event':'chapter',id:track?.dataset.trackDrag||tile?.dataset.event||ch?.dataset.chDrag,source,
   pointerId:e.pointerId,startX:e.clientX,startY:e.clientY};
 }
 function gridPointerMakeGhost(p,x,y){
@@ -9120,7 +9144,7 @@ function gridPointerMakeGhost(p,x,y){
  node.className='dm-grid-drag-ghost';node.setAttribute('aria-hidden','true');
  node.textContent=p.kind==='chapter'
   ?`Rozdział: ${__dmImports["06-core-state"].state.chapters.find(c=>c.id===p.id)?.name||'bez nazwy'}`
-  :(__dmImports["06-core-state"].state.events[p.id]?.text||'Wydarzenie');
+  :p.kind==='track'?((0,__dmImports["10-validation-storage"].getTrack)(p.id)?.name||'Wątek'):(__dmImports["06-core-state"].state.events[p.id]?.text||'Wydarzenie');
  document.body.appendChild(node);
  gridPointerGhost=node;
  gridPointerGhostMove(x,y);
@@ -9144,7 +9168,10 @@ function gridPointerMove(e){
  if(!p||e.pointerId!==p.pointerId)return;
  if(!gridPointerActive){
   if(Math.hypot(e.clientX-p.startX,e.clientY-p.startY)<GRID_POINTER_DRAG_THRESHOLD)return;
-  if(!p.source.isConnected){gridPointerPending=null;return}
+  if(!p.source.isConnected){
+   if(p.kind==='track')p.source=__dmImports["00-core"].root.querySelector(`[data-track-drag="${CSS.escape(p.id)}"]`);
+   if(!p.source?.isConnected){gridPointerPending=null;return}
+  }
   if(dragEdgePendingFinish){clearTimeout(dragEdgePendingFinish);dragEdgePendingFinish=0}
   dragEdgeStop();dragEdgeCancelled=false;
   (0,__dmImports["00-core"].clearTooltip)();(0,__dmImports["20-motion-camera"].graphChapterPreviewClear)();
@@ -9166,7 +9193,7 @@ function gridPointerClear(cancel){
  if(p){
   document.body.style.userSelect=gridPointerOldUserSelect;
   dragEdgeStop();__dmImports["06-core-state"].drag=null;clearEmptyLanePreview();gridChapterDropPreview(null);
-  __dmImports["00-core"].root.querySelectorAll('.drop,.dragging,.is-drop-target').forEach(node=>node.classList.remove('drop','dragging','is-drop-target'));
+  __dmImports["00-core"].root.querySelectorAll('.drop,.dragging,.is-drop-target,.track-reorder-before,.track-reorder-after').forEach(node=>node.classList.remove('drop','dragging','is-drop-target','track-reorder-before','track-reorder-after'));
   gridPointerBlockClickUntil=performance.now()+90;
  }
 }
@@ -9186,14 +9213,53 @@ function gridPointerCancel(){
  if(!gridPointerPending&&!gridPointerActive)return;
  dragEdgeCancelled=true;gridPointerClear(true);
 }
-function onDragStart(e){if(interactionDialog()){e.preventDefault();return}if(dragEdgePendingFinish){clearTimeout(dragEdgePendingFinish);dragEdgePendingFinish=0;}dragEdgeStop();gridChapterDropPreview(null);dragEdgeCancelled=false;(0,__dmImports["20-motion-camera"].graphChapterPreviewClear)();(0,__dmImports["00-core"].clearTooltip)();let src=e.target.closest('[data-drag-label],[data-event],[data-track-drag],[data-ch-drag]');if(!src)return;if(e.target.closest('input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"]')){e.preventDefault();return}if(src.hasAttribute('data-drag-label'))__dmImports["06-core-state"].drag={kind:'label',id:src.dataset.dragLabel};else if(src.hasAttribute('data-event')){
+function onDragStart(e){if(interactionDialog()){e.preventDefault();return}if(dragEdgePendingFinish){clearTimeout(dragEdgePendingFinish);dragEdgePendingFinish=0;}dragEdgeStop();gridChapterDropPreview(null);dragEdgeCancelled=false;(0,__dmImports["20-motion-camera"].graphChapterPreviewClear)();(0,__dmImports["00-core"].clearTooltip)();let src=e.target.closest('[data-drag-label],[data-event],[data-track-drag],[data-ch-drag]');if(!src)return;if(src.hasAttribute('data-track-drag')){e.preventDefault();return}if(e.target.closest('input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"]')){e.preventDefault();return}if(src.hasAttribute('data-drag-label'))__dmImports["06-core-state"].drag={kind:'label',id:src.dataset.dragLabel};else if(src.hasAttribute('data-event')){
  const id=src.dataset.event;
  // Zapisujemy grupę na początku gestu. Ewentualny click/rerender w czasie
  // HTML5 drag nie może zmienić zestawu przenoszonych wydarzeń.
  __dmImports["06-core-state"].drag={kind:'event',id,ids:(0,__dmImports["20-motion-camera"].isGraphMode)()&&__dmImports["10-validation-storage"].graphSelection.includes(id)&&__dmImports["10-validation-storage"].graphSelection.length>1
   ?__dmImports["10-validation-storage"].graphSelection.filter(eventId=>!!__dmImports["06-core-state"].state.events[eventId]):[id]};
 }else if(src.hasAttribute('data-ch-drag'))__dmImports["06-core-state"].drag={kind:'chapter',id:src.dataset.chDrag};else __dmImports["06-core-state"].drag={kind:'track',id:src.dataset.trackDrag};e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',JSON.stringify(__dmImports["06-core-state"].drag));src.classList.add('dragging')}
-function onDragOver(e){if(!__dmImports["06-core-state"].drag)return;dragEdgeRemember(e);e=dragEdgeNormalizeTarget(e);if(__dmImports["06-core-state"].drag.kind==='chapter'&&!(0,__dmImports["20-motion-camera"].isGraphMode)()){const target=gridChapterDropCandidate(e.clientX,e.clientY,e.target);gridChapterDropPreview(target);if(target){e.preventDefault();e.dataTransfer.dropEffect=target.id===__dmImports["06-core-state"].drag.id?'none':'move'}return}if((0,__dmImports["20-motion-camera"].isGraphMode)()&&__dmImports["06-core-state"].drag.kind==='event'){const board=e.target.closest('.graph-board');if(board){e.preventDefault();e.dataTransfer.dropEffect='move';__dmImports["00-core"].root.querySelectorAll('.drop,.is-drop-target').forEach(n=>n.classList.remove('drop','is-drop-target'));const zone=(0,__dmImports["20-motion-camera"].graphChaptersVisible)()?(0,__dmImports["20-motion-camera"].graphChapterDropZoneAt)(board,e.clientY):null;const band=zone!==null?board.querySelector(`.graph-chapter-band[data-graph-zone="${zone}"]`):null;band?.classList.add('is-drop-target');if(!band){const target=e.target.closest('.graph-node,.graph-lane,.empty-lane');target?.classList.add('drop')}return}}let hit=null,empty=null;if(__dmImports["06-core-state"].drag.kind==='event'){
+// Track reorder is a pointer gesture: the header and the board share an X axis.
+// A gap is a valid drop position, not a dead zone. Horizontal SIATKA uses Y.
+function trackReorderTarget(e,id){
+ const t=e.target;
+ if(!t?.closest)return null;
+ const flip=t.closest('.flip-track');
+ if(flip&&!(0,__dmImports["20-motion-camera"].isGraphMode)()){
+  const target=flip.querySelector('.flip-title[data-track-drag]');
+  return target?{node:target,id:target.dataset.trackDrag}:null;
+ }
+ const direct=t.closest('[data-track-drag]');
+ const headers=[...__dmImports["00-core"].root.querySelectorAll('.track-head[data-track-drag]')];
+ const clip=__dmImports["00-core"].root.querySelector('.head-clip')?.getBoundingClientRect();
+ if(!headers.length)return direct?{node:direct,id:direct.dataset.trackDrag}:null;
+ if(!t.closest('.head-clip,[data-board-clip]')||!clip||e.clientX<clip.left||e.clientX>clip.right)return null;
+ const boxes=headers.map(node=>({node,r:node.getBoundingClientRect(),id:node.dataset.trackDrag}));
+ const first=boxes[0],last=boxes.at(-1);
+ if(e.clientX<first.r.left-(0,__dmImports["20-motion-camera"].columnGap)()/2||e.clientX>last.r.right+(0,__dmImports["20-motion-camera"].columnGap)()/2)return null;
+ // Between columns choose the insertion boundary based on travel direction.
+ let target=boxes.find(b=>e.clientX>=b.r.left&&e.clientX<=b.r.right);
+ if(!target){
+  const source=boxes.findIndex(b=>b.id===id);
+  const right=boxes.findIndex(b=>b.r.left>e.clientX);
+  const index=right<0?boxes.length-1:Math.max(0,right>source?right-1:right);
+  target=boxes[index];
+ }
+ return target?{node:target.node,id:target.id}:null;
+}
+function onDragOver(e){if(!__dmImports["06-core-state"].drag)return;
+ if(__dmImports["06-core-state"].drag.kind==='track'){
+  __dmImports["00-core"].root.querySelectorAll('.drop,.track-reorder-before,.track-reorder-after').forEach(n=>n.classList.remove('drop','track-reorder-before','track-reorder-after'));
+  const target=trackReorderTarget(e,__dmImports["06-core-state"].drag.id);
+  if(target&&target.id!==__dmImports["06-core-state"].drag.id){
+   e.preventDefault();e.dataTransfer.dropEffect='move';
+   const a=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===__dmImports["06-core-state"].drag.id),b=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===target.id);
+   target.node.classList.add('drop',a<b?'track-reorder-after':'track-reorder-before');
+  }
+  return;
+ }
+dragEdgeRemember(e);e=dragEdgeNormalizeTarget(e);if(__dmImports["06-core-state"].drag.kind==='chapter'&&!(0,__dmImports["20-motion-camera"].isGraphMode)()){const target=gridChapterDropCandidate(e.clientX,e.clientY,e.target);gridChapterDropPreview(target);if(target){e.preventDefault();e.dataTransfer.dropEffect=target.id===__dmImports["06-core-state"].drag.id?'none':'move'}return}if((0,__dmImports["20-motion-camera"].isGraphMode)()&&__dmImports["06-core-state"].drag.kind==='event'){const board=e.target.closest('.graph-board');if(board){e.preventDefault();e.dataTransfer.dropEffect='move';__dmImports["00-core"].root.querySelectorAll('.drop,.is-drop-target').forEach(n=>n.classList.remove('drop','is-drop-target'));const zone=(0,__dmImports["20-motion-camera"].graphChaptersVisible)()?(0,__dmImports["20-motion-camera"].graphChapterDropZoneAt)(board,e.clientY):null;const band=zone!==null?board.querySelector(`.graph-chapter-band[data-graph-zone="${zone}"]`):null;band?.classList.add('is-drop-target');if(!band){const target=e.target.closest('.graph-node,.graph-lane,.empty-lane');target?.classList.add('drop')}return}}let hit=null,empty=null;if(__dmImports["06-core-state"].drag.kind==='event'){
  empty=emptyLaneDestination(e);
  if(empty)hit=__dmImports["00-core"].root.querySelector(`.chapter[data-chapter="${empty.ch}"] .empty-lane[data-empty-track="${empty.track}"]`);
 }
@@ -9218,10 +9284,10 @@ function onDrop(e){if(!__dmImports["06-core-state"].drag)return;dragEdgeStop();e
   (0,__dmImports["10-validation-storage"].toast)(zone===null?'Upuść zaznaczoną grupę wewnątrz rozdziału lub przerwy.':'Grupa jest już w tym obszarze. Upuść ją w innym rozdziale lub przerwie.');
   return;
  }
- if(track)(0,__dmImports["20-motion-camera"].graphMove)(id,track,before,e.clientY);return}}e.preventDefault();const d=__dmImports["06-core-state"].drag;const dest=d.kind==='event'?(dropDest(e)||gridDropFallback(e)):null;__dmImports["06-core-state"].drag=null;clearEmptyLanePreview();gridChapterDropPreview(null);__dmImports["00-core"].root.querySelectorAll('.drop,.dragging').forEach(el=>el.classList.remove('drop','dragging'));
+ if(track)(0,__dmImports["20-motion-camera"].graphMove)(id,track,before,e.clientY);return}}e.preventDefault();const d=__dmImports["06-core-state"].drag;const dest=d.kind==='event'?(dropDest(e)||gridDropFallback(e)):null;__dmImports["06-core-state"].drag=null;clearEmptyLanePreview();gridChapterDropPreview(null);__dmImports["00-core"].root.querySelectorAll('.drop,.dragging,.track-reorder-before,.track-reorder-after').forEach(el=>el.classList.remove('drop','dragging','track-reorder-before','track-reorder-after'));
 if(d.kind==='label'){let tile=e.target.closest('[data-event]');if(!tile)return;let item=__dmImports["06-core-state"].state.events[tile.dataset.event];if(!item)return;item.labels ||= [];if(!item.labels.includes(d.id))item.labels.push(d.id);render();return}
 if(d.kind==='event'){if(dest)moveTile(d.id,dest);return}
-if(d.kind==='track'){const to=e.target.closest('[data-track-drag]');if(!to)return;const a=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===d.id),b=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===to.dataset.trackDrag);if(a<0||b<0||a===b)return;const [item]=__dmImports["06-core-state"].state.tracks.splice(a,1);__dmImports["06-core-state"].state.tracks.splice(b,0,item);render();return}
+if(d.kind==='track'){const to=trackReorderTarget(e,d.id);if(!to)return;const a=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===d.id),b=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===to.id);if(a<0||b<0||a===b)return;const [item]=__dmImports["06-core-state"].state.tracks.splice(a,1);__dmImports["06-core-state"].state.tracks.splice(b,0,item);render();return}
 if(d.kind==='chapter'){const candidate=gridChapterDropCandidate(e.clientX,e.clientY,e.target);gridChapterDropPreview(null);gridChapterReorder(d.id,candidate)}}
 // Podgląd rozdziału w trybie grafu. Po wyjściu z ikonki znika bez zapisu.
 __dmImports["00-core"].root.addEventListener('pointerover',e=>{
@@ -9442,6 +9508,13 @@ __dmImports["00-core"].root.addEventListener('drop',e=>{
 },true);
 
 __dmImports["00-core"].root.addEventListener('click',e=>{
+ // Jeden stan zaznaczenia GRAFU: zwykły klik poza kafelkiem usuwa także
+ // wybór chronologiczny, nie tylko selected. Kontrolki wykorzystujące wybór
+ // (łączenie i rozdział z zaznaczenia) muszą otrzymać go przed skasowaniem.
+ if((0,__dmImports["20-motion-camera"].isGraphMode)()&&(__dmImports["10-validation-storage"].graphSelection.length||__dmImports["06-core-state"].selected?.type==='event'||__dmImports["20-motion-camera"].graphLinkPicking||__dmImports["20-motion-camera"].graphLinkChooser)&&
+    !e.target.closest('.graph-node [data-event], [data-action="graph-connect"], .graph-rail-selection, .graph-link-popover, .context-menu, [data-graph-nav-go]')){
+  (0,__dmImports["20-motion-camera"].graphCancelLinking)();
+ }
  const inspectorName=e.target.closest?.('[data-graph-chapter-inspector-name]');
  if(inspectorName){e.stopPropagation();(0,__dmImports["20-motion-camera"].graphEditInspectorChapterName)(inspectorName);return}
  const chapterDelete=e.target.closest?.('[data-graph-chapter-delete]');
@@ -9885,7 +9958,7 @@ const __dmSpecs=[
 ["30-graph-solver",__dmFactory8,{}],
 ["40-graph-layout",__dmFactory9,{"00-core":["GRAPH_LAYOUT_POLICY","clearTooltip","esc","root"],"06-core-state":["collapsedChapters","graphNavigatorClosed","graphRailExtraWidth","gridRailActive","noteHtmlToPlain","notesModal","notesOpen","notesSearchQuery","notesTab","panelLayout","sanitizeNoteHtml","state"],"09-storage-state":["safeProjectColor"],"10-validation-storage":["attr","cell","chapterIndex","chapterItems","compactView","getTag","labelSorter","sortedLabels","trackFilterActive","visibleTracks"],"20-motion-camera":["BOARD_INSET","COMPACT_GRID","EMPTY_TRACK_WIDTH","FULL_TRACK_WIDTH","GRAPH_NODE_GAP","GRID_COLUMNS","columnGap","graphAnimateEditingReflow","graphCamera","graphCaptureReflow","graphChapterSectionData","graphChapterZones","graphChaptersVisible","graphGapSectionData","graphMotionFrame","graphMotionPending","graphMoveAnimations","graphNavigatorSync","graphNetwork","graphOrder","graphPairs","graphPlacementCertainty","graphRailNetwork","graphRailSyncSelection","graphRestoreViewport","graphRunMotion","graphSyncChapterInspector","graphSyncWirePaths","graphWithReadCache","isGraphMode"],"30-graph-solver":["graphSolveVertical"],"50-ui-render":["interactionSuspendGestures","render"]}],
 ["45-tutorial",__dmFactory10,{"00-core":["esc","root"],"06-core-state":["notesModal","notesOpen","notesTab","setNotesModal","setNotesOpen"],"10-validation-storage":["toast"],"40-graph-layout":["setToolbarMenu"]}],
-["50-ui-render",__dmFactory11,{"00-core":["APP_VERSION","APP_VERSION_DATE","PROJECT_LIMITS","PROJECT_TEXT_LIMITS","PROJECT_TYPES","UI_INTERACTION","WORKSPACE_ACTIVE_KEY","activeProjectType","blockedWorkspaceTypes","clearTooltip","colors","createEmptyProject","esc","fullscreenIcon","inferProjectType","installTooltips","placeTooltip","root","row","scheduleTooltip","syncFullscreenButton","theme","tipNode","tipTarget","tipX","tipY","toggleFullscreen","toggleTheme","tooltipAt","uid","workspaceLabel","workspaceMemory"],"05-validation":["checkProjectData"],"06-core-state":["activeNoteId","activeNoteRange","addNoteSection","applyAppearanceSettings","capturedImageRange","chaptersIcon","clampTextScale","clampTrackWidthScale","collapsedChapters","collapsedChaptersByType","context","copyNoteText","dockHeight","drag","eventClipboard","formatNote","graphNavigatorArrivalId","graphNavigatorClosed","graphNavigatorDrag","graphNavigatorRootId","graphNavigatorViewedId","graphRailExtraWidth","gridRailActive","gridRailExtraWidth","hOffset","inlineEditEpoch","insertImageBlob","loadTestProject","noteHtmlToPlain","noteSearchStep","noteSearchToggle","noteTextForClipboard","notesModal","notesOpen","notesSearchIndex","notesSearchOpen","notesSearchQuery","notesTab","openNoteImagePicker","panelLayout","pasteTarget","prepareLoadedProject","rememberNoteSelection","removeNoteSection","richEditorFrom","sanitizeNoteHtml","saveNoteEditor","savePanelLayout","searchMode","searchOpen","searchSelectedLabels","searchTerm","selected","setNotesModal","setNotesOpen","sidebarWidth","startNoteTitleEdit","startPanelResize","state","tileLabelsIcon","togglePanel","toolbarMenuShouldReopen","updateNotesSearch"],"08-history-state":["history","historyIndex","historySnapshot","lastHistoryAt","lastHistoryKind","restoreHistory"],"09-storage-state":["bootFinished","dbInitialized","dbIsWorking","dbWriteSequence","lastProjectRenderFingerprint","markJsonBackupBaseline","projectFingerprint","projectSnapshot","renderingStartupProject","reportProjectFailure","safeProjectColor","saveOnChangedRender","updateJsonBackupWarning"],"10-validation-storage":["applyTrackFilter","attr","cell","chapterIndex","compactView","formatActiveTime","formatJsonExportDate","getCat","getCh","getLabel","getTag","getTrack","graphSelection","initializeProjectDatabase","queueProjectDatabaseSave","resetTrackFilter","restartSessionClock","restoreViewPreferences","save","saveFallback","saveViewPreferences","sessionActiveMs","setTrackFilterOpen","showAllTracks","sortedLabels","storageOtherWriter","tickActiveProjectTime","toast","trackFilterActive","trackFilterDraft","trackFilterOpen","trackFilterPanelMarkup","trackFilterSearch","updateJsonExportDisplay","updateStorageStatus","updateTrackFilterList"],"20-motion-camera":["graphAdd","graphAnimateEditingReflow","graphButtonsMarkup","graphCamera","graphCameraPhase","graphCameraReset","graphCancelLinking","graphCaptureReflow","graphChapterDropZoneAt","graphChapterMembership","graphChapterMove","graphChapterPreviewClear","graphChapterPreviewCooldownUntil","graphChapterPreviewStart","graphChapterPreviewTrigger","graphChapterTarget","graphChapterZones","graphChaptersVisible","graphChooseEvent","graphCloseLinkChooser","graphCompactCameraTopBuffer","graphEditInspectorChapterName","graphInsertBefore","graphInsertChapter","graphLinkChooser","graphLinkPicking","graphMotionPending","graphMove","graphNavigatorApplyPosition","graphNavigatorClose","graphNavigatorEdge","graphNavigatorEdgeCursor","graphNavigatorJump","graphNavigatorMarkup","graphNavigatorMoveDrag","graphNavigatorStartDrag","graphNavigatorStopDrag","graphNavigatorSync","graphNavigatorToggle","graphNetwork","graphOrder","graphPendingConflict","graphPinEditingTile","graphPinViewport","graphQueueMotion","graphRailCreateChapter","graphRelationList","graphReleaseEditPin","graphRemoveChapter","graphSelectChapter","graphSelectRailAt","graphSelectRailZone","graphSelectedChapterId","graphSelectedGap","graphStartConnecting","graphSyncChoice","graphToggleChapters","graphTrackAt","graphWithReadCache","gridNavigatorButtonMarkup","gridNavigatorJump","horizontalScrollPadding","isGraphMode","structureMotionBegin","structureMotionFinish"],"40-graph-layout":["QA_GRAPH_TRACK_CODES","autoGrowDescriptions","boardW","calcSizing","categoryMarkup","chapterActiveTracks","chapterMarkup","closePdfExportDialog","graphLayout","graphLayoutAll","graphLocalZoneMemo","graphProjectMarkup","graphRenderGeneration","gridCols","gridRailHover","headerMarkup","navigateNotesOutline","notesMarkup","openPdfExportDialog","pdfDialogOpen","pdfModalMarkup","renderNotesOutline","scheduleGridRailPositions","scheduleNotesOutline","setToolbarMenu","watchGridRailHeights"],"45-tutorial":["tutorialPrefs","tutorialRefresh"]}]
+["50-ui-render",__dmFactory11,{"00-core":["APP_VERSION","APP_VERSION_DATE","PROJECT_LIMITS","PROJECT_TEXT_LIMITS","PROJECT_TYPES","UI_INTERACTION","WORKSPACE_ACTIVE_KEY","activeProjectType","blockedWorkspaceTypes","clearTooltip","colors","createEmptyProject","esc","fullscreenIcon","inferProjectType","installTooltips","placeTooltip","root","row","scheduleTooltip","syncFullscreenButton","theme","tipNode","tipTarget","tipX","tipY","toggleFullscreen","toggleTheme","tooltipAt","uid","workspaceLabel","workspaceMemory"],"05-validation":["checkProjectData"],"06-core-state":["activeNoteId","activeNoteRange","addNoteSection","applyAppearanceSettings","capturedImageRange","chaptersIcon","clampTextScale","clampTrackWidthScale","collapsedChapters","collapsedChaptersByType","context","copyNoteText","dockHeight","drag","eventClipboard","formatNote","graphNavigatorArrivalId","graphNavigatorClosed","graphNavigatorDrag","graphNavigatorRootId","graphNavigatorViewedId","graphRailExtraWidth","gridRailActive","gridRailExtraWidth","hOffset","inlineEditEpoch","insertImageBlob","loadTestProject","noteHtmlToPlain","noteSearchStep","noteSearchToggle","noteTextForClipboard","notesModal","notesOpen","notesSearchIndex","notesSearchOpen","notesSearchQuery","notesTab","openNoteImagePicker","panelLayout","pasteTarget","prepareLoadedProject","rememberNoteSelection","removeNoteSection","richEditorFrom","sanitizeNoteHtml","saveNoteEditor","savePanelLayout","searchMode","searchOpen","searchSelectedLabels","searchTerm","selected","setNotesModal","setNotesOpen","sidebarWidth","startNoteTitleEdit","startPanelResize","state","tileLabelsIcon","togglePanel","toolbarMenuShouldReopen","updateNotesSearch"],"08-history-state":["history","historyIndex","historySnapshot","lastHistoryAt","lastHistoryKind","restoreHistory"],"09-storage-state":["bootFinished","dbInitialized","dbIsWorking","dbWriteSequence","lastProjectRenderFingerprint","markJsonBackupBaseline","projectFingerprint","projectSnapshot","renderingStartupProject","reportProjectFailure","safeProjectColor","saveOnChangedRender","updateJsonBackupWarning"],"10-validation-storage":["applyTrackFilter","attr","cell","chapterIndex","compactView","formatActiveTime","formatJsonExportDate","getCat","getCh","getLabel","getTag","getTrack","graphSelection","initializeProjectDatabase","queueProjectDatabaseSave","resetTrackFilter","restartSessionClock","restoreViewPreferences","save","saveFallback","saveViewPreferences","sessionActiveMs","setTrackFilterOpen","showAllTracks","sortedLabels","storageOtherWriter","tickActiveProjectTime","toast","trackFilterActive","trackFilterDraft","trackFilterOpen","trackFilterPanelMarkup","trackFilterSearch","updateJsonExportDisplay","updateStorageStatus","updateTrackFilterList"],"20-motion-camera":["columnGap","graphAdd","graphAnimateEditingReflow","graphButtonsMarkup","graphCamera","graphCameraPhase","graphCameraReset","graphCancelLinking","graphCaptureReflow","graphChapterDropZoneAt","graphChapterMembership","graphChapterMove","graphChapterPreviewClear","graphChapterPreviewCooldownUntil","graphChapterPreviewStart","graphChapterPreviewTrigger","graphChapterTarget","graphChapterZones","graphChaptersVisible","graphChooseEvent","graphCloseLinkChooser","graphCompactCameraTopBuffer","graphEditInspectorChapterName","graphInsertBefore","graphInsertChapter","graphLinkChooser","graphLinkPicking","graphMotionPending","graphMove","graphNavigatorApplyPosition","graphNavigatorClose","graphNavigatorEdge","graphNavigatorEdgeCursor","graphNavigatorJump","graphNavigatorMarkup","graphNavigatorMoveDrag","graphNavigatorStartDrag","graphNavigatorStopDrag","graphNavigatorSync","graphNavigatorToggle","graphNetwork","graphOrder","graphPendingConflict","graphPinEditingTile","graphPinViewport","graphQueueMotion","graphRailCreateChapter","graphRelationList","graphReleaseEditPin","graphRemoveChapter","graphSelectChapter","graphSelectRailAt","graphSelectRailZone","graphSelectedChapterId","graphSelectedGap","graphStartConnecting","graphSyncChoice","graphToggleChapters","graphTrackAt","graphWithReadCache","gridNavigatorButtonMarkup","gridNavigatorJump","horizontalScrollPadding","isGraphMode","structureMotionBegin","structureMotionFinish"],"40-graph-layout":["QA_GRAPH_TRACK_CODES","autoGrowDescriptions","boardW","calcSizing","categoryMarkup","chapterActiveTracks","chapterMarkup","closePdfExportDialog","graphLayout","graphLayoutAll","graphLocalZoneMemo","graphProjectMarkup","graphRenderGeneration","gridCols","gridRailHover","headerMarkup","navigateNotesOutline","notesMarkup","openPdfExportDialog","pdfDialogOpen","pdfModalMarkup","renderNotesOutline","scheduleGridRailPositions","scheduleNotesOutline","setToolbarMenu","watchGridRailHeights"],"45-tutorial":["tutorialPrefs","tutorialRefresh"]}]
 ];
 const __dmInstances=__dmSpecs.map(([id,factory,keys])=>{const imports=Object.create(null);for(const [key,names] of Object.entries(keys)){const view=Object.create(null);for(const name of names)Object.defineProperty(view,name,{enumerable:true,get:()=>__dmInterfaces[key][name],set:value=>{__dmInterfaces[key][name]=value}});Object.defineProperty(imports,key,{enumerable:true,value:Object.freeze(view)});}return [id,factory(Object.freeze(imports))]});
 for(const [id,instance] of __dmInstances){const step=instance.next();if(step.done)throw Error('Missing component interface: '+id);__dmInterfaces[id]=step.value}
