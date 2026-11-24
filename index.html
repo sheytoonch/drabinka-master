@@ -38,7 +38,9 @@
 .empty-lane-name.selected{outline:none;color:#223148;text-decoration:none;}
 .empty-lane-name[contenteditable]{cursor:text;overflow:auto;text-overflow:clip;outline:none!important;box-shadow:none!important;caret-color:#66513c;scrollbar-width:none;}
 .empty-lane-name[contenteditable]::-webkit-scrollbar{display:none;}
-.empty-lane-name::selection{background:transparent;color:inherit;}
+.empty-lane-name::selection{background:#dfccaa;color:#24334a;}
+html[data-theme="dark"] .empty-lane-name::selection{background:#b5d6f2;color:#142333;}
+.track-head .edit-input::selection{background:#b5d6f2;color:#142333;}
 .empty-lane-name{ -webkit-user-select:none;user-select:none ;}
 .empty-lane-name[contenteditable]{-webkit-user-select:text;user-select:text;}
 /* Zwykle pola puste pozostaja interaktywne nad podkladem kolumny. */
@@ -2782,7 +2784,7 @@ const GRAPH_LAYOUT_POLICY=Object.freeze({
  relationSlackWeight:1.25,wireSlackWeight:.09,
  compactIterations:65,compactStepThresholdPx:.015,compactCurrentWeight:.25,compactTargetWeight:.75
 });
-const APP_VERSION='2.1.10';
+const APP_VERSION='2.1.11';
 const APP_VERSION_DATE='2026-11-24';
 const THEME_STORAGE_KEY='drabinka-master-2-theme';
 let theme='dark';
@@ -2891,7 +2893,7 @@ function createEmptyProject(type=activeProjectType){
  const project={schemaVersion:PROJECT_SCHEMA_VERSION,projectName:'Nowy projekt '+workspaceLabel(type),boardMode:type,orientation:'vertical',tracks:[{id:uid(),name:'Nowy wątek',color:colors[0]}],
   chapters:[{id:uid(),name:'',desc:'',rows:[row()]}],events:{},categories:[],
   selected:null,checks:[],projectId:uid(),activeTimeMs:0,lastJsonExportAt:null,noteSections:[{id:uid(),title:'Ogólne',text:'',html:''}]};
- if(type==='graph')Object.assign(project,{graphTrackOrders:{},graphRelations:[],graphChapters:[{id:uid(),name:'Nowy rozdział',desc:''}],graphChapterAssignments:{},graphChaptersVisible:true});
+ if(type==='graph')Object.assign(project,{graphTrackOrders:{},graphRelations:[],graphChapters:[],graphChapterAssignments:{},graphChaptersVisible:true});
  return project;
 }
 
@@ -2979,7 +2981,7 @@ function checkProjectData(x){
  optional(x.graphDescription,v=>projectString(v,'graphDescription',PROJECT_TEXT_LIMITS.longText));
  optional(x.graphChaptersVisible,v=>{if(typeof v!=='boolean')projectError('graphChaptersVisible','oczekiwano boolean')});
  if(x.boardMode==='graph'){
-  arr(x.graphChapters,'graphChapters',PROJECT_LIMITS.chapters);if(!x.graphChapters.length)projectError('graphChapters','wymagany co najmniej jeden rozdział grafu');
+  arr(x.graphChapters,'graphChapters',PROJECT_LIMITS.chapters);
   obj(x.graphTrackOrders,'graphTrackOrders');obj(x.graphChapterAssignments,'graphChapterAssignments');arr(x.graphRelations,'graphRelations',PROJECT_LIMITS.relations);
   if(typeof x.graphChaptersVisible!=='boolean')projectError('graphChaptersVisible','oczekiwano boolean');
  }
@@ -3722,10 +3724,12 @@ get dbWriteTimer(){return dbWriteTimer},set dbWriteTimer(__dmValue){dbWriteTimer
 get dbWriteVersionByType(){return dbWriteVersionByType},
 get initializeJsonBackupStatus(){return initializeJsonBackupStatus},set initializeJsonBackupStatus(__dmValue){initializeJsonBackupStatus=__dmValue},
 get isRecord(){return isRecord},set isRecord(__dmValue){isRecord=__dmValue},
+get jsonBackupFingerprint(){return jsonBackupFingerprint},set jsonBackupFingerprint(__dmValue){jsonBackupFingerprint=__dmValue},
 get lastProjectRenderFingerprint(){return lastProjectRenderFingerprint},set lastProjectRenderFingerprint(__dmValue){lastProjectRenderFingerprint=__dmValue},
 get latchJsonBackupChange(){return latchJsonBackupChange},set latchJsonBackupChange(__dmValue){latchJsonBackupChange=__dmValue},
 get markJsonBackupBaseline(){return markJsonBackupBaseline},set markJsonBackupBaseline(__dmValue){markJsonBackupBaseline=__dmValue},
 get normalizeProjectStamp(){return normalizeProjectStamp},set normalizeProjectStamp(__dmValue){normalizeProjectStamp=__dmValue},
+get pendingJsonDraft(){return pendingJsonDraft},set pendingJsonDraft(__dmValue){pendingJsonDraft=__dmValue},
 get projectColor(){return projectColor},set projectColor(__dmValue){projectColor=__dmValue},
 get projectDB(){return projectDB},set projectDB(__dmValue){projectDB=__dmValue},
 get projectError(){return projectError},set projectError(__dmValue){projectError=__dmValue},
@@ -3940,33 +3944,106 @@ const storageSessionId=typeof crypto!=='undefined'&&typeof crypto.randomUUID==='
 const databaseRevisions=Object.create(null),localRevisions=Object.create(null);
 const storageConflicts=new Set();
 let storageOtherWriter=false;
+let storageRelease=null,storageLockDone=null,storageHandoff=Promise.resolve(),storageDesiredFocus=false;
+let storageTransition=false,storageChannel=null,storageRemoteNotice=false,storageFocusGeneration=0;
+const storageUncommitted=new Set();
+const storageFocused=()=>!document.hidden&&document.hasFocus();
+function storageNotify(type){try{storageChannel?.postMessage({type,writer:storageSessionId})}catch{}}
 const revisionOf=record=>record==null?'absent':JSON.stringify([record.updatedAt??null,record.writerId??null,record.project?.projectId??null]);
 function storageWriteAllowed(type){return __dmImports["09-storage-state"].dbInitialized&&!storageOtherWriter&&!storageConflicts.has(type)&&!__dmImports["00-core"].blockedWorkspaceTypes.has(type)}
 function storageConflict(type){
  if(storageConflicts.has(type))return;
  storageConflicts.add(type);
- toast('Inna karta zmieniła '+(0,__dmImports["00-core"].workspaceLabel)(type)+'. Zapis w tej karcie zablokowany. Wyeksportuj JSON i otwórz ponownie aplikację.');
+ toast('Inna karta zmieniła '+(0,__dmImports["00-core"].workspaceLabel)(type)+'. Zachowano lokalne zmiany bez nadpisania wspólnego projektu. Wyeksportuj JSON i otwórz ponownie aplikację.');
  if(typeof updateStorageStatus==='function')updateStorageStatus();
 }
 function updateStorageStatus(){
  if(typeof __dmImports["00-core"].root==='undefined')return;
  const name=__dmImports["00-core"].root.querySelector('.project-name');if(!name)return;
- const protectedWrite=storageOtherWriter||storageConflicts.has(__dmImports["00-core"].activeProjectType)||__dmImports["00-core"].blockedWorkspaceTypes.has(__dmImports["00-core"].activeProjectType);
+ const protectedWrite=(storageOtherWriter&&storageFocused()&&!storageTransition)||storageConflicts.has(__dmImports["00-core"].activeProjectType)||__dmImports["00-core"].blockedWorkspaceTypes.has(__dmImports["00-core"].activeProjectType);
  name.toggleAttribute('data-storage-protected',protectedWrite);
  if(protectedWrite){name.setAttribute('aria-description','Zapis zablokowany. Wyeksportuj JSON przed zamknięciem.');}
  else name.removeAttribute('aria-description');
 }
-// Blokada na cały czas życia dokumentu. Druga karta może przeglądać i
-// eksportować projekt, ale nie zapisze go, także po jawnym imporcie.
-// Gdy Web Locks nie są dostępne, pozostaje kontrola rewizji IDB.
-async function acquireStorageWriter(){
- if(typeof navigator==='undefined'||!navigator.locks?.request)return;
- await new Promise(resolve=>{
-  try{navigator.locks.request(__dmImports["09-storage-state"].PROJECT_DB_NAME+':writer',{mode:'exclusive',ifAvailable:true},lock=>{
-   if(!lock){storageOtherWriter=true;resolve();return}
-   resolve();return new Promise(()=>{}); // automatyczne zwolnienie po zniszczeniu dokumentu
-  }).catch(()=>resolve())}catch{resolve()}
+// Blokada należy do aktywnej karty, a nie do całego życia dokumentu.
+// Przy oczekiwaniu na blokadę nie wolno rozpocząć edycji starego modelu.
+async function acquireStorageWriter(wait=false){
+ if(storageRelease)return true;
+ storageOtherWriter=true;
+ if(!storageFocused())return false;
+ if(typeof navigator==='undefined'||!navigator.locks?.request){storageOtherWriter=false;return true}
+ return new Promise(resolve=>{
+  const controller=new AbortController();
+  const timeout=wait?setTimeout(()=>controller.abort(),4000):null;
+  try{
+   const options=wait?{mode:'exclusive',signal:controller.signal}:{mode:'exclusive',ifAvailable:true};
+   storageLockDone=navigator.locks.request(__dmImports["09-storage-state"].PROJECT_DB_NAME+':writer',options,lock=>{
+    clearTimeout(timeout);
+    if(!lock||!storageFocused()){resolve(false);return}
+    storageOtherWriter=false;
+    return new Promise(release=>{storageRelease=release;resolve(true)});
+   }).catch(()=>{clearTimeout(timeout);resolve(false)});
+  }catch{clearTimeout(timeout);resolve(false)}
  });
+}
+async function releaseStorageWriter(){
+ storageOtherWriter=true;
+ const release=storageRelease;storageRelease=null;
+ if(release){release();await storageLockDone}
+ storageLockDone=null;
+}
+// Odczyt po przejęciu blokady. Nie odświeżamy dokumentu ani lokalnych ustawień widoku.
+async function synchronizeStorageProjects(){
+ let renderNeeded=false;
+ for(const type of __dmImports["00-core"].PROJECT_TYPES){
+  if(storageConflicts.has(type)||__dmImports["00-core"].blockedWorkspaceTypes.has(type))continue;
+  try{
+   const record=__dmImports["09-storage-state"].projectDB?await readDatabaseRecord(__dmImports["09-storage-state"].projectDB,(0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type)):null;
+   const timer=__dmImports["09-storage-state"].projectDB?await readDatabaseTimer(__dmImports["09-storage-state"].projectDB,(0,__dmImports["09-storage-state"].workspaceTimerKey)(type)):null;
+   let local=null;
+   try{const raw=localStorage.getItem(workspaceLocalCheckpointKey(type));if(raw)local=JSON.parse(raw)}catch{}
+   const dbRevision=revisionOf(record),localRevision=revisionOf(local);
+   const changed=dbRevision!==(databaseRevisions[type]??'absent')||localRevision!==(localRevisions[type]??'absent');
+   const old=type===__dmImports["00-core"].activeProjectType?__dmImports["06-core-state"].state:__dmImports["00-core"].workspaceMemory[type]?.state;
+   if(storageUncommitted.has(type)||(changed&&type===__dmImports["00-core"].activeProjectType&&(0,__dmImports["09-storage-state"].pendingJsonDraft)())){storageConflict(type);continue}
+   if(changed&&!record&&!local){storageConflict(type);continue}
+   if(changed){
+    const candidate=local&&(!record||(0,__dmImports["09-storage-state"].normalizeProjectStamp)(local.updatedAt)>(0,__dmImports["09-storage-state"].normalizeProjectStamp)(record.updatedAt))?local:record;
+    if(!candidate?.project)throw Error('Brak poprawnej migawki');
+    if(candidate===local)parseLocalCheckpoint(JSON.stringify(local),type);
+    const next=(0,__dmImports["06-core-state"].prepareLoadedProject)(candidate.project);
+    if((0,__dmImports["00-core"].inferProjectType)(next)!==type)throw Error('Błędny typ projektu');
+    (0,__dmImports["09-storage-state"].initializeJsonBackupStatus)(next);
+    const sameProject=old?.projectId===next.projectId;
+    // Widok i zaznaczenie pozostają lokalne. Historia nie może odtwarzać starej fabuły.
+    if(sameProject){for(const key of ['orientation','graphChaptersVisible','selected','checks'])if(key in old)next[key]=old[key];next.activeTimeMs=Math.max(next.activeTimeMs,old.activeTimeMs||0)}
+    const contentChanged=!old||(0,__dmImports["09-storage-state"].jsonBackupFingerprint)((0,__dmImports["09-storage-state"].projectSnapshot)(old))!==(0,__dmImports["09-storage-state"].jsonBackupFingerprint)((0,__dmImports["09-storage-state"].projectSnapshot)(next));
+    if(timer?.projectId===next.projectId)next.activeTimeMs=Math.max(next.activeTimeMs,Number(timer.activeTimeMs)||0);
+    databaseRevisions[type]=dbRevision;localRevisions[type]=localRevision;
+    __dmImports["09-storage-state"].dbWriteVersionByType[type]=Math.max(__dmImports["09-storage-state"].dbWriteVersionByType[type]||0,(0,__dmImports["09-storage-state"].normalizeProjectStamp)(candidate.updatedAt));
+    if(type===__dmImports["00-core"].activeProjectType){
+     if(contentChanged){
+      __dmImports["06-core-state"].state=next;
+      __dmImports["08-history-state"].history=[(0,__dmImports["08-history-state"].historySnapshot)()];__dmImports["08-history-state"].historyIndex=0;__dmImports["08-history-state"].lastHistoryKind='';__dmImports["08-history-state"].lastHistoryAt=0;
+      if(__dmImports["06-core-state"].selected?.type==='event'&&!__dmImports["06-core-state"].state.events[__dmImports["06-core-state"].selected.id]||__dmImports["06-core-state"].selected?.type==='track'&&!getTrack(__dmImports["06-core-state"].selected.id)||__dmImports["06-core-state"].selected?.type==='chapter'&&!getCh(__dmImports["06-core-state"].selected.id))__dmImports["06-core-state"].selected=null;
+      graphSelection=graphSelection.filter(id=>__dmImports["06-core-state"].state.events[id]);
+      __dmImports["06-core-state"].collapsedChapters=new Set([...__dmImports["06-core-state"].collapsedChapters].filter(id=>getCh(id)));
+      __dmImports["40-graph-layout"].graphLocalZoneMemo.clear();__dmImports["06-core-state"].activeNoteRange=null;renderNeeded=true;
+     }else{
+      for(const key of ['activeTimeMs','lastJsonExportAt','jsonSavedFingerprint','jsonBackupDirty'])__dmImports["06-core-state"].state[key]=next[key];
+     }
+     __dmImports["00-core"].workspaceMemory[type]={state:__dmImports["06-core-state"].state,history:__dmImports["08-history-state"].history,historyIndex:__dmImports["08-history-state"].historyIndex,lastHistoryKind:__dmImports["08-history-state"].lastHistoryKind,lastHistoryAt:__dmImports["08-history-state"].lastHistoryAt};
+     __dmImports["09-storage-state"].lastProjectRenderFingerprint=(0,__dmImports["09-storage-state"].projectFingerprint)();lastTimePersistedAt=__dmImports["06-core-state"].state.activeTimeMs;
+    }else{
+     const memory=__dmImports["00-core"].workspaceMemory[type];
+     __dmImports["00-core"].workspaceMemory[type]=contentChanged?{state:next,history:[],historyIndex:0,lastHistoryKind:'',lastHistoryAt:0}:{...memory,state:next};
+    }
+   }else if(old&&timer?.projectId===old.projectId){old.activeTimeMs=Math.max(old.activeTimeMs,Number(timer.activeTimeMs)||0)}
+  }catch(error){storageConflict(type);console.warn('Synchronizacja projektu nie powiodła się',error)}
+ }
+ if(renderNeeded){__dmImports["09-storage-state"].renderingStartupProject=true;try{(0,__dmImports["50-ui-render"].render)({instantStructure:true})}finally{__dmImports["09-storage-state"].renderingStartupProject=false}}
+ lastTimePersistedAt=__dmImports["06-core-state"].state.activeTimeMs;
+ (0,__dmImports["09-storage-state"].updateJsonBackupWarning)();updateJsonExportDisplay();updateProjectTimerDisplay();updateStorageStatus();
 }
 function databaseRevisionMatches(type,record){
  if(record?.writerId===storageSessionId)return true;
@@ -3974,14 +4051,14 @@ function databaseRevisionMatches(type,record){
 }
 function writeDatabaseTimer(){
  const type=__dmImports["00-core"].activeProjectType;
- if(!__dmImports["09-storage-state"].projectDB||!storageWriteAllowed(type))return;
+ if(!__dmImports["09-storage-state"].projectDB||!storageWriteAllowed(type))return Promise.resolve();
  const record={id:(0,__dmImports["09-storage-state"].workspaceTimerKey)(type),projectId:__dmImports["06-core-state"].state.projectId,activeTimeMs:Math.round(Math.max(0,Number(__dmImports["06-core-state"].state.activeTimeMs)||0)),updatedAt:Date.now()};
  const warn=()=>{if(!storageWarningShown){storageWarningShown=true;toast('Nie udało się zapisać czasu pracy - wyeksportuj kopię JSON')}};
- try{const tx=__dmImports["09-storage-state"].projectDB.transaction(__dmImports["09-storage-state"].PROJECT_DB_STORE,'readwrite'),store=tx.objectStore(__dmImports["09-storage-state"].PROJECT_DB_STORE);
+ return new Promise(resolve=>{try{const tx=__dmImports["09-storage-state"].projectDB.transaction(__dmImports["09-storage-state"].PROJECT_DB_STORE,'readwrite'),store=tx.objectStore(__dmImports["09-storage-state"].PROJECT_DB_STORE);
   const read=store.get((0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type));
   read.onsuccess=()=>{if(!storageWriteAllowed(type))return;if(!databaseRevisionMatches(type,read.result)){storageConflict(type);return}if(read.result?.project?.projectId===record.projectId)store.put(record)};
-  tx.onerror=warn;tx.onabort=warn;
- }catch{warn()}
+  tx.oncomplete=()=>resolve();tx.onerror=()=>{warn();resolve()};tx.onabort=()=>{warn();resolve()};
+ }catch{warn();resolve()}})
 }
 function writeDatabaseSnapshot(snapshot,type=__dmImports["00-core"].activeProjectType,updatedAt=(0,__dmImports["09-storage-state"].projectWriteStamp)(type)){
  if(!storageWriteAllowed(type))return Promise.resolve({persisted:false});
@@ -3991,7 +4068,7 @@ function writeDatabaseSnapshot(snapshot,type=__dmImports["00-core"].activeProjec
    const tx=__dmImports["09-storage-state"].projectDB.transaction(__dmImports["09-storage-state"].PROJECT_DB_STORE,'readwrite');
    const store=tx.objectStore(__dmImports["09-storage-state"].PROJECT_DB_STORE),key=(0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type);
    let persisted=false,record=null;
-   tx.oncomplete=()=>{if(persisted){databaseRevisions[type]=revisionOf(record);__dmImports["09-storage-state"].dbLastSavedAt=Math.max(__dmImports["09-storage-state"].dbLastSavedAt,updatedAt)}resolve({persisted})};
+   tx.oncomplete=()=>{if(persisted){databaseRevisions[type]=revisionOf(record);__dmImports["09-storage-state"].dbLastSavedAt=Math.max(__dmImports["09-storage-state"].dbLastSavedAt,updatedAt);storageNotify(type)}resolve({persisted})};
    tx.onerror=()=>reject(tx.error||Error('Błąd zapisu IndexedDB'));
    tx.onabort=()=>reject(tx.error||Error('Przerwany zapis IndexedDB'));
    // Atomowy odczyt przed zapisem w tej samej transakcji. Transakcja
@@ -4020,6 +4097,9 @@ function parseLocalCheckpoint(raw,type){
 }
 function saveFallback(snapshot,type=__dmImports["00-core"].activeProjectType,updatedAt=(0,__dmImports["09-storage-state"].projectWriteStamp)(type)){
  if(!storageWriteAllowed(type))return false;
+ // Bez blokady najpierw zatwierdź rekord IDB; inaczej lokalna kopia
+ // przegranej transakcji mogłaby zostać błędnie uznana za nowszy projekt.
+ if(__dmImports["09-storage-state"].dbIsWorking&&!storageRelease)return false;
  try{
   // Odczyt poprzedniego punktu kontrolnego zapobiega nadpisaniu nowej
   // migawki przez zakończoną po czasie operację starego projektu.
@@ -4041,6 +4121,7 @@ function saveFallback(snapshot,type=__dmImports["00-core"].activeProjectType,upd
   const entry={format:1,updatedAt,writerId:storageSessionId,project:snapshot};
   localStorage.setItem(workspaceLocalCheckpointKey(type),JSON.stringify(entry));
   localRevisions[type]=revisionOf(entry);
+  if(!__dmImports["09-storage-state"].dbIsWorking)storageNotify(type);
   return true;
  }catch{return false}
 }
@@ -4060,7 +4141,7 @@ function flushProjectDatabaseSave(){
  __dmImports["09-storage-state"].dbPending=null;
  __dmImports["09-storage-state"].dbWriteSequence=__dmImports["09-storage-state"].dbWriteSequence.catch(()=>{}).then(()=>writeDatabaseSnapshot(pending.snapshot,pending.type,pending.updatedAt)).catch(err=>{
   if(!storageWarningShown){storageWarningShown=true;toast('Nie udało się zapisać w pamięci przeglądarki - wyeksportuj kopię JSON')}
-  saveFallback(pending.snapshot,pending.type,pending.updatedAt);
+  if(!saveFallback(pending.snapshot,pending.type,pending.updatedAt))storageConflict(pending.type);
  });
 }
 // Kolejność: IndexedDB → localStorage → wzorcowy projekt QA dla brakującego slotu.
@@ -4143,7 +4224,7 @@ async function initializeProjectDatabase(){
   __dmImports["09-storage-state"].storageRecoveryWarning='Nie udało się wczytać wszystkich projektów - sprawdź zapis i wyeksportuj kopię JSON.';
  }finally{
   __dmImports["09-storage-state"].dbInitialized=true;
-  if(storageOtherWriter)__dmImports["09-storage-state"].storageRecoveryWarning='Inna karta korzysta z zapisu. Tutaj zmiany nie są zapisywane automatycznie - wyeksportuj JSON.';
+  
   updateStorageStatus();
   if(!storageOtherWriter)try{localStorage.setItem(__dmImports["00-core"].WORKSPACE_ACTIVE_KEY,__dmImports["00-core"].activeProjectType)}catch{}
   if((0,__dmImports["05-validation"].validProject)(__dmImports["06-core-state"].state)){
@@ -4151,12 +4232,14 @@ async function initializeProjectDatabase(){
    startActiveProjectTimer();restartSessionClock();
    if(__dmImports["09-storage-state"].storageRecoveryWarning)setTimeout(()=>toast(__dmImports["09-storage-state"].storageRecoveryWarning),100);
    (0,__dmImports["45-tutorial"].tutorialAutoStart)();
+   if(storageOtherWriter&&storageFocused())projectVisibilityChanged();
   }
  }
 }
 let storageWarningShown=false;
 function save(kind='mutation',existingSnapshot=null,existingFingerprint=null){
  if(__dmImports["09-storage-state"].renderingStartupProject)return;
+ if(__dmImports["09-storage-state"].dbInitialized&&storageOtherWriter&&kind!=='timer'&&kind!=='timer-flush')storageUncommitted.add(__dmImports["00-core"].activeProjectType);
  if(__dmImports["09-storage-state"].dbInitialized&&!storageWriteAllowed(__dmImports["00-core"].activeProjectType)&&!storageWarningShown){storageWarningShown=true;toast('Zapis projektu jest chroniony przed nadpisaniem - wyeksportuj bieżące zmiany do JSON lub przywróć projekt z kopii.')}
  const snapshot=existingSnapshot||(0,__dmImports["09-storage-state"].projectSnapshot)();
  if(kind!=='timer'&&kind!=='timer-flush'){(0,__dmImports["09-storage-state"].latchJsonBackupChange)(snapshot);__dmImports["09-storage-state"].lastProjectRenderFingerprint=existingFingerprint||(0,__dmImports["09-storage-state"].projectFingerprint)(snapshot);}
@@ -4184,7 +4267,7 @@ function restartSessionClock(){
  sessionActiveMs=0;
  lastTimeTick=performance.now();lastActivityAt=lastTimeTick;
  lastTimePersistedAt=__dmImports["06-core-state"].state.activeTimeMs;
- timeCounterVisible=!document.hidden&&document.hasFocus();
+ timeCounterVisible=storageFocused()&&!storageOtherWriter;
  updateProjectTimerDisplay();
 }
 function formatActiveTime(ms){
@@ -4224,22 +4307,45 @@ function tickActiveProjectTime(){
  }
 }
 function projectActivity(){
- if(!timeCounterStarted||document.hidden)return;
+ if(!timeCounterStarted||!storageFocused()||storageOtherWriter||storageTransition)return;
  tickActiveProjectTime();
  lastActivityAt=performance.now();
  timeCounterVisible=true;
 }
 function projectVisibilityChanged(){
- tickActiveProjectTime();
- timeCounterVisible=!document.hidden&&document.hasFocus();
- const now=performance.now();lastTimeTick=now;
- if(timeCounterVisible)lastActivityAt=now;
- const snapshot=(0,__dmImports["09-storage-state"].projectSnapshot)();
- // Ochrona także przy ukryciu karty (np. uśpienie telefonu), gdy pagehide
- // może w ogóle nie nadejść. Kopia synchroniczna przed transakcją IDB.
- if(!timeCounterVisible)saveFallback(snapshot);
- queueProjectDatabaseSave(snapshot,true);
- if(__dmImports["09-storage-state"].dbIsWorking)writeDatabaseTimer();
+ if(!__dmImports["09-storage-state"].dbInitialized)return;
+ const focused=storageFocused();
+ if(focused===storageDesiredFocus&&!storageTransition&&(!storageOtherWriter)===focused)return;
+ if(focused===storageDesiredFocus&&storageTransition)return;
+ tickActiveProjectTime();timeCounterVisible=false;
+ storageDesiredFocus=focused;
+ const generation=++storageFocusGeneration;
+ // Zatwierdź edytor zanim oddamy blokadę. Przejście nie może zgubić tekstu.
+ if(!focused&&!storageOtherWriter)document.activeElement?.blur?.();
+ storageTransition=true;
+ if(focused)__dmImports["00-core"].root.inert=true;
+ storageHandoff=storageHandoff.catch(()=>{}).then(async()=>{
+  if(!focused){
+   if(!storageOtherWriter){
+    flushProjectDatabaseSave();await __dmImports["09-storage-state"].dbWriteSequence;
+    if(__dmImports["09-storage-state"].dbIsWorking)await writeDatabaseTimer();
+    else if(storageWriteAllowed(__dmImports["00-core"].activeProjectType))saveFallback((0,__dmImports["09-storage-state"].projectSnapshot)());
+    await releaseStorageWriter();
+   }
+   return;
+  }
+  if(!storageFocused())return;
+  if(!await acquireStorageWriter(true)){if(storageFocused())toast('Nie udało się przejąć zapisu. Przełącz kartę ponownie lub zapisz JSON.');return}
+  await synchronizeStorageProjects();storageRemoteNotice=false;
+  if(!storageFocused()){await releaseStorageWriter();return}
+  if(!storageConflicts.has(__dmImports["00-core"].activeProjectType)&&!__dmImports["00-core"].blockedWorkspaceTypes.has(__dmImports["00-core"].activeProjectType)&&!storageUncommitted.has(__dmImports["00-core"].activeProjectType))storageWarningShown=false;
+ }).catch(async error=>{console.warn('Przekazanie zapisu',error);storageConflict(__dmImports["00-core"].activeProjectType);await releaseStorageWriter()}).finally(()=>{
+  if(storageFocusGeneration!==generation)return;
+  storageTransition=false;__dmImports["00-core"].root.inert=false;
+  timeCounterVisible=storageFocused()&&!storageOtherWriter;
+  lastTimeTick=performance.now();if(timeCounterVisible)lastActivityAt=lastTimeTick;
+  updateStorageStatus();(0,__dmImports["09-storage-state"].updateJsonBackupWarning)();
+ });
 }
 function flushOnPageHide(){
  if(!storageWriteAllowed(__dmImports["00-core"].activeProjectType))return;
@@ -4270,26 +4376,24 @@ function startActiveProjectTimer(){
  if(timeCounterStarted)return;
  timeCounterStarted=true;
  lastTimeTick=performance.now();lastActivityAt=lastTimeTick;
- timeCounterVisible=!document.hidden&&document.hasFocus();
+ timeCounterVisible=storageFocused()&&!storageOtherWriter;
+ storageDesiredFocus=storageFocused();
  lastTimePersistedAt=__dmImports["06-core-state"].state.activeTimeMs;
  document.addEventListener('visibilitychange',projectVisibilityChanged);
  window.addEventListener('focus',projectVisibilityChanged);
  window.addEventListener('blur',projectVisibilityChanged);
  window.addEventListener('pagehide',flushOnPageHide);
  window.addEventListener('beforeunload',__dmImports["09-storage-state"].protectUnsavedJson);
+ window.addEventListener('keydown',event=>{if(storageTransition&&storageDesiredFocus){event.preventDefault();event.stopImmediatePropagation()}},true);
  // Edytory zatwierdzane na blur mogą jeszcze nie mieć tekstu w modelu.
  const refreshDraft=()=>queueMicrotask(__dmImports["09-storage-state"].updateJsonBackupWarning);
  for(const name of ['input','focusout','keydown'])__dmImports["00-core"].root.addEventListener(name,event=>{if(event.target.closest?.('[data-json-draft]'))refreshDraft()},true);
  (0,__dmImports["09-storage-state"].updateJsonBackupWarning)();
- window.addEventListener('storage',event=>{
-  for(const type of __dmImports["00-core"].PROJECT_TYPES){
-   if(event.key!==workspaceLocalCheckpointKey(type)&&event.key!==null)continue;
-   if(event.key===workspaceLocalCheckpointKey(type)){
-    try{const record=JSON.parse(event.newValue);if(record?.writerId===storageSessionId||revisionOf(record)===localRevisions[type])continue}catch{}
-   }
-   storageConflict(type);
-  }
- });
+ // Informacje o zapisie nie powodują nadpisania modelu w tle. Odczyt następuje przy przejęciu blokady.
+ try{if(typeof BroadcastChannel==='function')storageChannel=new BroadcastChannel(__dmImports["09-storage-state"].PROJECT_DB_NAME+':changes')}catch{}
+ const changedElsewhere=()=>{storageRemoteNotice=true};
+ if(storageChannel)storageChannel.onmessage=event=>{if(event.data?.writer!==storageSessionId)changedElsewhere()};
+ window.addEventListener('storage',event=>{if(event.key===null||__dmImports["00-core"].PROJECT_TYPES.some(type=>event.key===workspaceLocalCheckpointKey(type)))changedElsewhere()});
  const listen=['pointermove','pointerdown','keydown','wheel','scroll','input','paste','drop','touchstart'];
  for(const eventName of listen){__dmImports["00-core"].root.addEventListener(eventName,projectActivity,{passive:true,capture:true})}
  setInterval(tickActiveProjectTime,PROJECT_TIMER_INTERVAL_MS);
@@ -5235,7 +5339,7 @@ function graphGapIndex(){
  const chapters=__dmImports["06-core-state"].state.graphChapters||[];
  return Array.from({length:chapters.length+1},(_,i)=>i).find(i=>(chapters[i-1]?.id||null)===graphSelectedGap.after&&(chapters[i]?.id||null)===graphSelectedGap.before)??-1;
 }
-function graphHasChapters(){return Array.isArray(__dmImports["06-core-state"].state.graphChapters)&&__dmImports["06-core-state"].state.graphChapters.length>=1}
+function graphHasChapters(){return Array.isArray(__dmImports["06-core-state"].state.graphChapters)}
 function graphSelectChapter(id){
  if(!__dmImports["06-core-state"].state.graphChapters?.some(ch=>ch.id===id))return;
  if(graphSelectedChapterId===id&&!graphSelectedGap)return;
@@ -5245,11 +5349,11 @@ function graphSelectChapter(id){
 function graphSyncChapterInspector(){
  if(!isGraphMode()||!graphChaptersVisible())return;
  const chapters=__dmImports["06-core-state"].state.graphChapters||[];
- if(!chapters.length)return;
+ if(!chapters.length){graphSelectedChapterId=null;graphSelectedGap={after:null,before:null};}
  const gapIndex=graphGapIndex();
  if(gapIndex>=0){
   const left=__dmImports["00-core"].root.querySelector('.graph-chapter-inspector-left'),right=__dmImports["00-core"].root.querySelector('.graph-chapter-inspector-right');
-  const title=gapIndex===0?'Przestrzeń przed rozdziałem 1':gapIndex===chapters.length?`Przestrzeń po rozdziale ${gapIndex}`:`Przestrzeń między rozdziałami ${gapIndex} i ${gapIndex+1}`;
+  const title=!chapters.length?'Przestrzeń bez rozdziałów':gapIndex===0?'Przestrzeń przed rozdziałem 1':gapIndex===chapters.length?`Przestrzeń po rozdziale ${gapIndex}`:`Przestrzeń między rozdziałami ${gapIndex} i ${gapIndex+1}`;
   const ids=graphGapSectionData.find(s=>s.z===gapIndex*2)?.ids||[];
   if(left){delete left.dataset.chapterId;left.innerHTML=''}
   if(right){delete right.dataset.chapterId;delete right.dataset.markup;right.innerHTML=`<div class="graph-chapter-inspector-title">${(0,__dmImports["00-core"].esc)(title)}</div><div class="graph-chapter-inspector-count">${ids.length} ${ids.length===1?'wydarzenie':ids.length>=2&&ids.length<=4?'wydarzenia':'wydarzeń'}</div>${(0,__dmImports["40-graph-layout"].graphChapterStatsForIds)(ids)}`}
@@ -5341,7 +5445,6 @@ function graphInsertChapter(after,side='end'){
 function graphRemoveChapter(id){
  const chapters=__dmImports["06-core-state"].state.graphChapters||[],index=chapters.findIndex(c=>c.id===id);
  if(index<0)return false;
- if(chapters.length<=1){(0,__dmImports["10-validation-storage"].toast)('Musi pozostać przynajmniej jeden rozdział grafu');return false}
  const chapter=chapters[index],assignments=__dmImports["06-core-state"].state.graphChapterAssignments||{};
  const assigned=Object.values(assignments).filter(ch=>ch===id).length;
  const question=`Usunąć rozdział „${chapter.name||'Bez nazwy'}”?\n`+
@@ -7061,6 +7164,7 @@ function graphLayout(board){
    cursor+=sectionHeight;sections.push(section);
   }
   height=Math.max(cursor,(sc?.clientHeight||330)-4,330); // Ostatnia strefa zawiera miejsce na +.
+  if(lastZone===0)sections[0].height=height;
   graphPatchAbsoluteChildren(layer,sections.map(s=>{
    const ch=s.z%2===1?__dmImports["06-core-state"].state.graphChapters[(s.z-1)/2]:null;
    return `<div class="graph-chapter-band ${ch?'':'graph-chapter-gap'}" data-graph-zone="${s.z}" style="top:${s.top}px;height:${s.height}px"></div>`;
@@ -7124,7 +7228,9 @@ function graphLayout(board){
     if(gap){
      const gapTop=offset+gap.top;
      const gapBottom=gapTop+gap.height;
-     if(!gap.ids.length){
+     if(__dmImports["06-core-state"].state.graphChapters.length===0){
+      addButton(-1,gapTop+railSize/2,'Dodaj pierwszy rozdział','start');
+     }else if(!gap.ids.length){
       // Pusta przerwa: jeden przycisk pośrodku, styczny do obu granic.
       addButton(i-1,(gapTop+gapBottom)/2,description,'start');
      }else if(i===0){
@@ -9774,7 +9880,7 @@ const __dmSpecs=[
 ["06-core-state",__dmFactory3,{"00-core":["BUILTIN_TEST_ID","PROJECT_TEXT_LIMITS","PROJECT_TYPES","activeProjectType","clearTooltip","createEmptyProject","root","uid"],"05-validation":["checkProjectData"],"10-validation-storage":["compactView","getLabel","save","toast"],"20-motion-camera":["graphChaptersVisible","isGraphMode"],"40-graph-layout":["scheduleNotesOutline"],"50-ui-render":["interactionSuspendGestures","render","syncScrollbarSpace"]}],
 ["08-history-state",__dmFactory4,{"00-core":["root"],"06-core-state":["activeNoteRange","collapsedChapters","normalizeNoteSections","selected","state"],"07-history-codec":["historyCheckpointNeeded","historyCost","historyDetachedString","historyEncode","materializeHistory"],"09-storage-state":["reportProjectFailure"],"10-validation-storage":["getCh","getTrack","toast"],"20-motion-camera":["graphCamera","graphCameraReset","graphMotionFrame","graphMotionPending","isGraphMode"],"50-ui-render":["render"]}],
 ["09-storage-state",__dmFactory5,{"00-core":["PROJECT_TEXT_LIMITS","PROJECT_TYPES","activeProjectType","root","workspaceLabel","workspaceMemory"],"06-core-state":["normalizeJsonExportDate","state"],"10-validation-storage":["save","toast"]}],
-["10-validation-storage",__dmFactory6,{"00-core":["PROJECT_TYPES","WORKSPACE_ACTIVE_KEY","activeProjectType","blockedWorkspaceTypes","clearTooltip","createEmptyProject","esc","inferProjectType","root","workspaceLabel","workspaceLocalKey","workspaceMemory"],"05-validation":["checkProjectData","validProject"],"06-core-state":["collapsedChapters","collapsedChaptersByType","graphNavigatorClosed","graphNavigatorRootId","graphNavigatorViewedId","hOffset","loadTestProject","normalizeJsonExportDate","notesTab","prepareLoadedProject","selected","state","toastTimeout"],"08-history-state":["history","historyIndex","historySnapshot","lastHistoryKind","recordHistory"],"09-storage-state":["PROJECT_DB_NAME","PROJECT_DB_STORE","PROJECT_DB_WRITE_DELAY_MS","bootFinished","dbInitialized","dbIsWorking","dbLastSavedAt","dbPending","dbTouchedBeforeLoad","dbWriteSequence","dbWriteTimer","dbWriteVersionByType","initializeJsonBackupStatus","lastProjectRenderFingerprint","latchJsonBackupChange","markJsonBackupBaseline","normalizeProjectStamp","projectDB","projectFingerprint","projectSnapshot","projectWriteStamp","protectUnsavedJson","renderingStartupProject","storageRecoveryWarning","updateJsonBackupWarning","workspaceDatabaseKey","workspaceTimerKey"],"40-graph-layout":["setToolbarMenu"],"45-tutorial":["tutorialAutoStart"],"50-ui-render":["render"]}],
+["10-validation-storage",__dmFactory6,{"00-core":["PROJECT_TYPES","WORKSPACE_ACTIVE_KEY","activeProjectType","blockedWorkspaceTypes","clearTooltip","createEmptyProject","esc","inferProjectType","root","workspaceLabel","workspaceLocalKey","workspaceMemory"],"05-validation":["checkProjectData","validProject"],"06-core-state":["activeNoteRange","collapsedChapters","collapsedChaptersByType","graphNavigatorClosed","graphNavigatorRootId","graphNavigatorViewedId","hOffset","loadTestProject","normalizeJsonExportDate","notesTab","prepareLoadedProject","selected","state","toastTimeout"],"08-history-state":["history","historyIndex","historySnapshot","lastHistoryAt","lastHistoryKind","recordHistory"],"09-storage-state":["PROJECT_DB_NAME","PROJECT_DB_STORE","PROJECT_DB_WRITE_DELAY_MS","bootFinished","dbInitialized","dbIsWorking","dbLastSavedAt","dbPending","dbTouchedBeforeLoad","dbWriteSequence","dbWriteTimer","dbWriteVersionByType","initializeJsonBackupStatus","jsonBackupFingerprint","lastProjectRenderFingerprint","latchJsonBackupChange","markJsonBackupBaseline","normalizeProjectStamp","pendingJsonDraft","projectDB","projectFingerprint","projectSnapshot","projectWriteStamp","protectUnsavedJson","renderingStartupProject","storageRecoveryWarning","updateJsonBackupWarning","workspaceDatabaseKey","workspaceTimerKey"],"40-graph-layout":["graphLocalZoneMemo","setToolbarMenu"],"45-tutorial":["tutorialAutoStart"],"50-ui-render":["render"]}],
 ["20-motion-camera",__dmFactory7,{"00-core":["ANIMATION_TIMING","GRAPH_CONNECTION_STYLE","UI_INTERACTION","esc","root","row","uid"],"06-core-state":["collapsedChapters","graphNavigatorArrivalId","graphNavigatorArrivalTimer","graphNavigatorClosed","graphNavigatorDrag","graphNavigatorPosition","graphNavigatorPositionTouched","graphNavigatorRootId","graphNavigatorSize","graphNavigatorViewedId","saveGraphNavigatorState","savePanelLayout","selected","state"],"09-storage-state":["safeProjectColor"],"10-validation-storage":["cell","chapterIndex","compactView","getTrack","graphSelection","resetTrackFilter","save","saveViewPreferences","toast","trackFilterActive","visibleTracks"],"40-graph-layout":["graphChapterStatsForIds","graphLayout","widths"],"50-ui-render":["compactEmpty","editStart","interactionDialog","interactionSuspendGestures","locateEvent","pick","render","styleSelected"]}],
 ["30-graph-solver",__dmFactory8,{}],
 ["40-graph-layout",__dmFactory9,{"00-core":["GRAPH_LAYOUT_POLICY","clearTooltip","esc","root"],"06-core-state":["collapsedChapters","graphNavigatorClosed","graphRailExtraWidth","gridRailActive","noteHtmlToPlain","notesModal","notesOpen","notesSearchQuery","notesTab","panelLayout","sanitizeNoteHtml","state"],"09-storage-state":["safeProjectColor"],"10-validation-storage":["attr","cell","chapterIndex","chapterItems","compactView","getTag","labelSorter","sortedLabels","trackFilterActive","visibleTracks"],"20-motion-camera":["BOARD_INSET","COMPACT_GRID","EMPTY_TRACK_WIDTH","FULL_TRACK_WIDTH","GRAPH_NODE_GAP","GRID_COLUMNS","columnGap","graphAnimateEditingReflow","graphCamera","graphCaptureReflow","graphChapterSectionData","graphChapterZones","graphChaptersVisible","graphGapSectionData","graphMotionFrame","graphMotionPending","graphMoveAnimations","graphNavigatorSync","graphNetwork","graphOrder","graphPairs","graphPlacementCertainty","graphRailNetwork","graphRailSyncSelection","graphRestoreViewport","graphRunMotion","graphSyncChapterInspector","graphSyncWirePaths","graphWithReadCache","isGraphMode"],"30-graph-solver":["graphSolveVertical"],"50-ui-render":["interactionSuspendGestures","render"]}],
