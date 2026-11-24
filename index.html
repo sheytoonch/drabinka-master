@@ -2658,7 +2658,7 @@ html[data-theme="light"] .dm-tutorial-outline,html[data-theme="light"] .dm-tutor
 /* Nagłówek biblioteki jest w normalnym przepływie, niezależnie od wysokości panelu. */
 .dock{box-sizing:border-box;min-height:34px!important;}
 .dock-header{display:flex;align-items:center;gap:12px;flex:0 0 33px;min-width:0;padding:3px 12px;box-sizing:border-box;background:var(--dock-header-bg,rgba(33,46,64,.30));}
-.dock .dock-mini-title,.dock.is-collapsed .dock-mini-title{position:static;flex:1 1 auto;min-width:max-content;height:27px;padding:0;background:none;box-sizing:border-box;white-space:nowrap;line-height:normal;}
+.dock .dock-mini-title,.dock.is-collapsed .dock-mini-title{display:flex;align-items:center;position:static;flex:1 1 auto;min-width:max-content;height:27px;padding:0;background:none;box-sizing:border-box;white-space:nowrap;line-height:normal;}
 .dock .dock-mini-title:hover{background:rgba(110,160,210,.16);}
 .dock-search-input{box-sizing:border-box;flex:0 1 240px;min-width:0;height:25px;padding:3px 7px;border:1px solid #8294a9;border-radius:4px;background:#f5f7fa;color:#27384a;font:12px/1.2 system-ui,sans-serif;}
 html[data-theme="dark"] .dock-search-input{background:#172536;color:#e4edf7;border-color:#536b83;}
@@ -2782,7 +2782,7 @@ const GRAPH_LAYOUT_POLICY=Object.freeze({
  relationSlackWeight:1.25,wireSlackWeight:.09,
  compactIterations:65,compactStepThresholdPx:.015,compactCurrentWeight:.25,compactTargetWeight:.75
 });
-const APP_VERSION='2.1.8';
+const APP_VERSION='2.1.10';
 const APP_VERSION_DATE='2026-11-24';
 const THEME_STORAGE_KEY='drabinka-master-2-theme';
 let theme='dark';
@@ -7748,7 +7748,7 @@ function updateDockSearch(){
  }
  const empty=dock.querySelector('.dock-search-empty');if(empty)empty.hidden=!q||matches>0;
 }
-function render({instantStructure=false,gridChapter=null}={}){
+function render({instantStructure=false,gridChapter=null,horizontalAnchor=null}={}){
  const previousGridCols=__dmImports["40-graph-layout"].gridCols,previousBoardW=__dmImports["40-graph-layout"].boardW;
  // Szybka ścieżka wyłącznie dla dodania wydarzenia w zwykłej SIATCE.
  // Zmiana szerokości wątku, aktywny edytor lub dialog wymaga pełnego renderu.
@@ -7768,7 +7768,7 @@ if(localGridChapter&&previousGridCols===__dmImports["40-graph-layout"].gridCols&
 /* SIATKA: własny pointer drag pozwala używać kółka bez przerywania gestu.
    GRAF, etykiety i wątki zachowują dotychczasowy mechanizm. */
 if(!(0,__dmImports["20-motion-camera"].isGraphMode)())__dmImports["00-core"].root.querySelectorAll('.chapter .tile[data-event],.chapter-bar[data-ch-drag],.chapter-bar [data-ch-drag]').forEach(node=>node.draggable=false);
-updateDockSearch();(0,__dmImports["00-core"].installTooltips)();(0,__dmImports["00-core"].syncFullscreenButton)();(0,__dmImports["40-graph-layout"].autoGrowDescriptions)();if(__dmImports["06-core-state"].toolbarMenuShouldReopen){(0,__dmImports["40-graph-layout"].setToolbarMenu)(true);__dmImports["06-core-state"].toolbarMenuShouldReopen=false;}if(__dmImports["06-core-state"].searchOpen)updateSearchResults();if(__dmImports["10-validation-storage"].trackFilterOpen)(0,__dmImports["10-validation-storage"].updateTrackFilterList)();if(__dmImports["06-core-state"].notesSearchOpen)(0,__dmImports["06-core-state"].updateNotesSearch)();const sc=__dmImports["00-core"].root.querySelector('.upper-scroll'),dc=__dmImports["00-core"].root.querySelector('.dock-scroll'),h=__dmImports["00-core"].root.querySelector('.h-rail');syncScrollbarSpace();sc.scrollTop=prevY;dc.scrollTop=prevDock;const notesList=__dmImports["00-core"].root.querySelector('.notes-list');if(notesList)notesList.scrollTop=prevNotesY;(0,__dmImports["40-graph-layout"].renderNotesOutline)();const notesOutline=__dmImports["00-core"].root.querySelector('.notes-outline');if(notesOutline)notesOutline.scrollTop=prevOutlineY;h.scrollLeft=prevX+(0,__dmImports["20-motion-camera"].horizontalScrollPadding)();syncH();styleSelected();(0,__dmImports["40-graph-layout"].watchGridRailHeights)();(0,__dmImports["40-graph-layout"].scheduleGridRailPositions)();if((0,__dmImports["20-motion-camera"].isGraphMode)()){(0,__dmImports["20-motion-camera"].graphSyncChoice)();(0,__dmImports["20-motion-camera"].graphNavigatorSync)();requestAnimationFrame(()=>{if(generation!==__dmImports["40-graph-layout"].graphRenderGeneration)return;(0,__dmImports["40-graph-layout"].graphLayoutAll)(prevY);(0,__dmImports["20-motion-camera"].structureMotionFinish)(structureSnapshot)})}else{(0,__dmImports["20-motion-camera"].graphNavigatorSync)();requestAnimationFrame(()=>{if(generation!==__dmImports["40-graph-layout"].graphRenderGeneration)return;(0,__dmImports["20-motion-camera"].structureMotionFinish)(structureSnapshot)})}(0,__dmImports["10-validation-storage"].updateStorageStatus)();(0,__dmImports["09-storage-state"].saveOnChangedRender)();if(__dmImports["09-storage-state"].dbInitialized)(0,__dmImports["10-validation-storage"].saveViewPreferences)();(0,__dmImports["45-tutorial"].tutorialRefresh)();__dmImports["06-core-state"].context=null;if(prevMenu){/* menu zamyka się przy zmianie widoku */}}
+updateDockSearch();(0,__dmImports["00-core"].installTooltips)();(0,__dmImports["00-core"].syncFullscreenButton)();(0,__dmImports["40-graph-layout"].autoGrowDescriptions)();if(__dmImports["06-core-state"].toolbarMenuShouldReopen){(0,__dmImports["40-graph-layout"].setToolbarMenu)(true);__dmImports["06-core-state"].toolbarMenuShouldReopen=false;}if(__dmImports["06-core-state"].searchOpen)updateSearchResults();if(__dmImports["10-validation-storage"].trackFilterOpen)(0,__dmImports["10-validation-storage"].updateTrackFilterList)();if(__dmImports["06-core-state"].notesSearchOpen)(0,__dmImports["06-core-state"].updateNotesSearch)();const sc=__dmImports["00-core"].root.querySelector('.upper-scroll'),dc=__dmImports["00-core"].root.querySelector('.dock-scroll'),h=__dmImports["00-core"].root.querySelector('.h-rail');syncScrollbarSpace();sc.scrollTop=prevY;dc.scrollTop=prevDock;const notesList=__dmImports["00-core"].root.querySelector('.notes-list');if(notesList)notesList.scrollTop=prevNotesY;(0,__dmImports["40-graph-layout"].renderNotesOutline)();const notesOutline=__dmImports["00-core"].root.querySelector('.notes-outline');if(notesOutline)notesOutline.scrollTop=prevOutlineY;h.scrollLeft=prevX+(0,__dmImports["20-motion-camera"].horizontalScrollPadding)();syncH();if(horizontalAnchor){const node=__dmImports["00-core"].root.querySelector(horizontalAnchor.selector);if(node){const rect=node.getBoundingClientRect();h.scrollLeft+=rect.left+rect.width/2-horizontalAnchor.clientX;syncH()}}styleSelected();(0,__dmImports["40-graph-layout"].watchGridRailHeights)();(0,__dmImports["40-graph-layout"].scheduleGridRailPositions)();if((0,__dmImports["20-motion-camera"].isGraphMode)()){(0,__dmImports["20-motion-camera"].graphSyncChoice)();(0,__dmImports["20-motion-camera"].graphNavigatorSync)();requestAnimationFrame(()=>{if(generation!==__dmImports["40-graph-layout"].graphRenderGeneration)return;(0,__dmImports["40-graph-layout"].graphLayoutAll)(prevY);(0,__dmImports["20-motion-camera"].structureMotionFinish)(structureSnapshot)})}else{(0,__dmImports["20-motion-camera"].graphNavigatorSync)();requestAnimationFrame(()=>{if(generation!==__dmImports["40-graph-layout"].graphRenderGeneration)return;(0,__dmImports["20-motion-camera"].structureMotionFinish)(structureSnapshot)})}(0,__dmImports["10-validation-storage"].updateStorageStatus)();(0,__dmImports["09-storage-state"].saveOnChangedRender)();if(__dmImports["09-storage-state"].dbInitialized)(0,__dmImports["10-validation-storage"].saveViewPreferences)();(0,__dmImports["45-tutorial"].tutorialRefresh)();__dmImports["06-core-state"].context=null;if(prevMenu){/* menu zamyka się przy zmianie widoku */}}
 // Ten sam obserwator obsługuje zmiany wielkości okna oraz przeciąganie panelu ETYKIETY.
 // Nie modyfikuje modelu projektu i nie uruchamia jego zapisu.
 let observedUpperScroll=null;
@@ -8098,17 +8098,17 @@ function addEvent(chId,rowOrIndex,trackId,asGap=false,placeIndex=null){const c=(
 function addTrack(referenceId=null,side='right'){
  const id=(0,__dmImports["00-core"].uid)(),where=__dmImports["06-core-state"].state.tracks.findIndex(t=>t.id===referenceId);
  const index=where<0?__dmImports["06-core-state"].state.tracks.length:where+(side==='right'?1:0);
+ // Plus zostaje zastąpiony nowym wątkiem w tym samym punkcie ekranu.
+ // Wstawianie z menu zachowuje pozycję wątku odniesienia, a nie końca planszy.
+ const referenceSelector=where>=0?`.track-head[data-track-drag="${CSS.escape(referenceId)}"]`:'.track-new';
+ const reference=__dmImports["00-core"].root.querySelector(referenceSelector),rect=reference?.getBoundingClientRect();
+ const horizontalAnchor=rect?{selector:`.track-head[data-track-drag="${CSS.escape(where>=0?referenceId:id)}"]`,clientX:rect.left+rect.width/2}:null;
  __dmImports["06-core-state"].state.tracks.splice(index,0,{id,name:'Nowy wątek',color:__dmImports["00-core"].colors[__dmImports["06-core-state"].state.tracks.length%__dmImports["00-core"].colors.length]});
  if(__dmImports["10-validation-storage"].trackFilterActive){__dmImports["10-validation-storage"].trackFilterActive.add(id);__dmImports["10-validation-storage"].trackFilterDraft.add(id)}
- render();
- // Dodawanie przez stale widoczny '+' nie otwiera edytora nazwy: można
- // klikać wielokrotnie bez wymuszonego rozmycia (blur) i ponownego renderu.
- if(referenceId){editStart('track',id,__dmImports["00-core"].root.querySelector(`[data-edit="track"][data-id="${id}"].empty-lane-name`));}
- else {
-  const rail=__dmImports["00-core"].root.querySelector('.h-rail');
-  if(rail){rail.scrollLeft=rail.scrollWidth;syncH()}
- }
-} 
+ render({horizontalAnchor});
+ // Plus nie uruchamia edytora nazwy; menu zachowuje dotychczasową edycję.
+ if(referenceId)editStart('track',id,__dmImports["00-core"].root.querySelector(`[data-edit="track"][data-id="${id}"].empty-lane-name`));
+}
 function addLabel(cat){const c=(0,__dmImports["10-validation-storage"].getCat)(cat);if(!c)return;const id=(0,__dmImports["00-core"].uid)();c.labels.push({id,name:''});render();editStart('label',id)}
 function addCat(){const id=(0,__dmImports["00-core"].uid)();__dmImports["06-core-state"].state.categories.push({id,name:'',color:__dmImports["00-core"].colors[__dmImports["06-core-state"].state.categories.length%__dmImports["00-core"].colors.length]+'a6',labels:[]});render();editStart('cat',id)}
 function removeEvent(id){if(!__dmImports["06-core-state"].state.events[id])return;if((0,__dmImports["20-motion-camera"].isGraphMode)()){const place=locateEvent(id);const order=place?(0,__dmImports["20-motion-camera"].graphOrder)(place.t.id):[];const at=order.indexOf(id);const anchor=order[at+1]||order[at-1];if(anchor)(0,__dmImports["20-motion-camera"].graphPinViewport)(anchor);(0,__dmImports["20-motion-camera"].graphQueueMotion)('delete',id)}__dmImports["06-core-state"].state.graphRelations=(0,__dmImports["20-motion-camera"].graphRelationList)().filter(r=>r.from!==id&&r.to!==id);if(__dmImports["06-core-state"].state.graphChapterAssignments)delete __dmImports["06-core-state"].state.graphChapterAssignments[id];if(__dmImports["06-core-state"].state.graphChapterGapPlacement)delete __dmImports["06-core-state"].state.graphChapterGapPlacement[id];
