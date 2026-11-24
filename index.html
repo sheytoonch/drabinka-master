@@ -2811,7 +2811,7 @@ const GRAPH_LAYOUT_POLICY=Object.freeze({
  relationSlackWeight:1.25,wireSlackWeight:.09,
  compactIterations:65,compactStepThresholdPx:.015,compactCurrentWeight:.25,compactTargetWeight:.75
 });
-const APP_VERSION='2.1.16';
+const APP_VERSION='2.1.17';
 const APP_VERSION_DATE='2026-11-24';
 const THEME_STORAGE_KEY='drabinka-master-2-theme';
 let theme='dark';
@@ -3981,7 +3981,8 @@ let storageOtherWriter=false;
 let storageRelease=null,storageLockDone=null,storageHandoff=Promise.resolve(),storageDesiredFocus=false;
 let storageTransition=false,storageChannel=null,storageRemoteNotice=false,storageFocusGeneration=0;
 const storageUncommitted=new Set();
-const storageSaveErrors=new Map();
+const storageSaveErrors=new Map(),storageFallbackErrors=new Map();
+const pendingStorageRepairs=new Set();
 const STORAGE_BACKUP_LIMIT=5;
 function storageValidatedEntry(entry,type){
  if(!entry?.project||!(0,__dmImports["09-storage-state"].normalizeProjectStamp)(entry.updatedAt)||(entry.format!==undefined&&entry.format!==1))throw Error('Brak poprawnej migawki lub daty zapisu');
@@ -4021,7 +4022,7 @@ function storageCandidates(record,type){
 }
 function storageBestCandidate(records,type){return records.flatMap(record=>storageCandidates(record,type)).sort((a,b)=>b.updatedAt-a.updatedAt)[0]||null}
 function storageStatusText(){
- const bad=__dmImports["00-core"].PROJECT_TYPES.filter(t=>storageSaveErrors.has(t)||storageConflicts.has(t)||__dmImports["00-core"].blockedWorkspaceTypes.has(t));
+ const bad=__dmImports["00-core"].PROJECT_TYPES.filter(t=>storageSaveErrors.has(t)||storageFallbackErrors.has(t)||storageConflicts.has(t)||__dmImports["00-core"].blockedWorkspaceTypes.has(t));
  return bad.length?'Autozapis: błąd ('+bad.map(__dmImports["00-core"].workspaceLabel).join(', ')+')':'';
 }
 
@@ -4080,9 +4081,11 @@ async function synchronizeStorageProjects(){
   try{
    const record=__dmImports["09-storage-state"].projectDB?await readDatabaseRecord(__dmImports["09-storage-state"].projectDB,(0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type)):null;
    const timer=__dmImports["09-storage-state"].projectDB?await readDatabaseTimer(__dmImports["09-storage-state"].projectDB,(0,__dmImports["09-storage-state"].workspaceTimerKey)(type)):null;
-   let local=null;
-   try{const raw=localStorage.getItem(workspaceLocalCheckpointKey(type));if(raw)local=JSON.parse(raw)}catch{}
-   const dbRevision=revisionOf(record),localRevision=revisionOf(local);
+   let raw=null;try{raw=localStorage.getItem(workspaceLocalCheckpointKey(type))}catch{}let local=null,localRevision='absent';
+   if(raw!==null)try{local=JSON.parse(raw);localRevision=revisionOf(local)}catch{localRevision=malformedLocalRevision(raw);pendingStorageRepairs.add(type)}
+   if(record)try{storageValidatedEntry(record,type)}catch{pendingStorageRepairs.add(type)}
+   if(local)try{storageValidatedEntry(local,type);if(local.format!==1)throw Error('Niepoprawny format kopii')}catch{pendingStorageRepairs.add(type)}
+   const dbRevision=revisionOf(record);
    const changed=dbRevision!==(databaseRevisions[type]??'absent')||localRevision!==(localRevisions[type]??'absent');
    const old=type===__dmImports["00-core"].activeProjectType?__dmImports["06-core-state"].state:__dmImports["00-core"].workspaceMemory[type]?.state;
    if(storageUncommitted.has(type)||(changed&&type===__dmImports["00-core"].activeProjectType&&(0,__dmImports["09-storage-state"].pendingJsonDraft)())){storageConflict(type);continue}
@@ -4140,13 +4143,14 @@ function writeDatabaseTimer(){
   tx.oncomplete=()=>resolve();tx.onerror=()=>{warn();resolve()};tx.onabort=()=>{warn();resolve()};
  }catch{warn();resolve()}})
 }
-function storageMakeDatabaseRecord(previous,snapshot,type,updatedAt){
+function storageMakeDatabaseRecord(previous,snapshot,type,updatedAt,rejectedLocal=null){
  const record={id:(0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type),updatedAt,writerId:storageSessionId,project:snapshot,backups:storageHistory(previous,snapshot,type)};
  if(previous){try{storageValidatedEntry(previous,type)}catch{record.rejected={updatedAt:previous.updatedAt,project:previous.project}}}
  if(previous?.rejected&&!record.rejected)record.rejected=previous.rejected;
+ if(rejectedLocal!==null||previous?.rejectedLocal)record.rejectedLocal=rejectedLocal??previous.rejectedLocal;
  return record;
 }
-function writeDatabaseSnapshot(snapshot,type=__dmImports["00-core"].activeProjectType,updatedAt=(0,__dmImports["09-storage-state"].projectWriteStamp)(type)){
+function writeDatabaseSnapshot(snapshot,type=__dmImports["00-core"].activeProjectType,updatedAt=(0,__dmImports["09-storage-state"].projectWriteStamp)(type),rejectedLocal=null){
  if(!storageWriteAllowed(type))return Promise.resolve({persisted:false});
  if(!__dmImports["09-storage-state"].projectDB)return Promise.reject(Error('IndexedDB jest niedostępna'));
  try{(0,__dmImports["05-validation"].checkProjectData)(snapshot);if((0,__dmImports["00-core"].inferProjectType)(snapshot)!==type)throw Error('Niepoprawny typ projektu')}catch(error){storageSetError(type,error);return Promise.reject(error)}
@@ -4165,7 +4169,7 @@ function writeDatabaseSnapshot(snapshot,type=__dmImports["00-core"].activeProjec
     if(!storageWriteAllowed(type))return;
     if(!databaseRevisionMatches(type,read.result)){storageConflict(type);return}
     if((0,__dmImports["09-storage-state"].normalizeProjectStamp)(read.result?.updatedAt)>updatedAt){try{storageValidatedEntry(read.result,type);return}catch{}}
-    record=storageMakeDatabaseRecord(read.result,snapshot,type,updatedAt);
+    record=storageMakeDatabaseRecord(read.result,snapshot,type,updatedAt,rejectedLocal);
     store.put(record);persisted=true;
    };
    read.onerror=()=>{try{tx.abort()}catch{}};
@@ -4182,7 +4186,7 @@ function parseLocalCheckpoint(raw,type){
  if((0,__dmImports["00-core"].inferProjectType)(entry.project)!==type)throw Error('Błędny typ projektu w kopii awaryjnej');
  return {project:entry.project,updatedAt:entry.updatedAt};
 }
-function saveFallback(snapshot,type=__dmImports["00-core"].activeProjectType,updatedAt=(0,__dmImports["09-storage-state"].projectWriteStamp)(type)){
+function saveFallback(snapshot,type=__dmImports["00-core"].activeProjectType,updatedAt=(0,__dmImports["09-storage-state"].projectWriteStamp)(type),archivedRaw=null){
  if(!storageWriteAllowed(type))return false;
  // Bez blokady najpierw zatwierdź rekord IDB; inaczej lokalna kopia
  // przegranej transakcji mogłaby zostać błędnie uznana za nowszy projekt.
@@ -4207,13 +4211,65 @@ function saveFallback(snapshot,type=__dmImports["00-core"].activeProjectType,upd
   }catch{if(previousRaw!==null&&malformedLocalRevision(previousRaw)!==(localRevisions[type]??'absent')){storageConflict(type);return false}} // nie nadpisuj obcej uszkodzonej kopii
   // setItem dla JEDNEGO klucza jest atomowe.
   const entry={format:1,updatedAt,writerId:storageSessionId,project:snapshot,backups:storageHistory(previous,snapshot,type)};
-  if(previousRaw){try{parseLocalCheckpoint(previousRaw,type)}catch{const key=workspaceLocalCheckpointKey(type)+':rejected';if(!localStorage.getItem(key))localStorage.setItem(key,previousRaw)}}
+  let archivedInDatabase=false;
+  if(previousRaw){try{parseLocalCheckpoint(previousRaw,type)}catch{
+   const key=workspaceLocalCheckpointKey(type)+':rejected';
+   if(previousRaw===archivedRaw)archivedInDatabase=true;
+   else{const original=localStorage.getItem(key);if(original&&original!==previousRaw)throw Error('Istnieje inna odrzucona kopia. Nie nadpisano jej.');if(!original)localStorage.setItem(key,previousRaw)}
+  }}
   // W razie limitu localStorage zmniejszamy historię, nie usuwając bieżącej kopii przed zapisem.
   while(true){try{localStorage.setItem(workspaceLocalCheckpointKey(type),JSON.stringify(entry));break}catch(error){if(!entry.backups.length)throw error;entry.backups.pop()}}
   localRevisions[type]=revisionOf(entry);
+  // Drugą kopię oryginału twórz tylko po skutecznym zapisie, jeśli jest miejsce.
+  if(archivedInDatabase)try{const key=workspaceLocalCheckpointKey(type)+':rejected';if(!localStorage.getItem(key))localStorage.setItem(key,previousRaw)}catch{}
+  storageFallbackErrors.delete(type);updateStorageStatus();
   if(!__dmImports["09-storage-state"].dbIsWorking){storageClearError(type);storageNotify(type)}
   return true;
- }catch(error){if(!__dmImports["09-storage-state"].dbIsWorking)storageSetError(type,error);return false}
+ }catch(error){storageFallbackErrors.set(type,'localStorage: '+String(error?.message||error));updateStorageStatus();if(!__dmImports["09-storage-state"].dbIsWorking)storageSetError(type,error);return false}
+}
+// Naprawa nie kończy się na odczycie: odłóż ją do czasu przejęcia blokady,
+// utrwal oryginał i zweryfikuj obie bieżące kopie. Nie czyścimy archiwów.
+function queueStorageRepairs(){
+ if(!pendingStorageRepairs.size||storageOtherWriter)return __dmImports["09-storage-state"].dbWriteSequence;
+ __dmImports["09-storage-state"].dbWriteSequence=__dmImports["09-storage-state"].dbWriteSequence.catch(()=>{}).then(async()=>{
+  for(const type of [...pendingStorageRepairs]){
+   if(!storageWriteAllowed(type))continue;
+   try{
+    let invalidLocal=false,dbRecord=null,invalidDatabase=false,localRecord=null;
+    const raw=localStorage.getItem(workspaceLocalCheckpointKey(type));
+    let localRevision='absent';
+    if(raw!==null){
+     try{localRecord=JSON.parse(raw);localRevision=revisionOf(localRecord)}catch{localRevision=malformedLocalRevision(raw)}
+     try{parseLocalCheckpoint(raw,type)}catch{invalidLocal=true}
+    }
+    if(localRevision!==(localRevisions[type]??'absent')){storageConflict(type);continue}
+    if(__dmImports["09-storage-state"].dbIsWorking)dbRecord=await readDatabaseRecord(__dmImports["09-storage-state"].projectDB,(0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type));
+    // Migawka i jej stempel muszą powstać razem, przed kolejną zmianą modelu.
+    const snapshot=(0,__dmImports["09-storage-state"].projectSnapshot)(type===__dmImports["00-core"].activeProjectType?__dmImports["06-core-state"].state:__dmImports["00-core"].workspaceMemory[type].state),stamp=(0,__dmImports["09-storage-state"].projectWriteStamp)(type);
+    (0,__dmImports["05-validation"].checkProjectData)(snapshot);
+    if(__dmImports["09-storage-state"].dbIsWorking){
+     if(dbRecord)try{storageValidatedEntry(dbRecord,type)}catch{invalidDatabase=true}
+     if(!databaseRevisionMatches(type,dbRecord)){storageConflict(type);continue}
+     // Nawet gdy główny zapis jest poprawny, zachowaj surową kopię awaryjną
+     // w IDB przed jej zastąpieniem. Nie zależy to od limitu localStorage.
+     const localStamp=(0,__dmImports["09-storage-state"].normalizeProjectStamp)(storageBestCandidate([localRecord],type)?.updatedAt);
+     if(invalidDatabase||!dbRecord||localStamp>(0,__dmImports["09-storage-state"].normalizeProjectStamp)(dbRecord.updatedAt)||(invalidLocal&&dbRecord.rejectedLocal!==raw)){
+      const result=await writeDatabaseSnapshot(snapshot,type,stamp,invalidLocal?raw:null);
+      if(!result.persisted)throw Error('Nie utrwalono naprawy IndexedDB');
+      dbRecord=await readDatabaseRecord(__dmImports["09-storage-state"].projectDB,(0,__dmImports["09-storage-state"].workspaceDatabaseKey)(type));
+     }
+     storageValidatedEntry(dbRecord,type);
+    }
+    if(invalidLocal){
+     if(!saveFallback(snapshot,type,stamp,dbRecord?.rejectedLocal===raw?raw:null))throw Error(storageFallbackErrors.get(type)||'Nie utrwalono naprawy localStorage (brak blokady lub miejsca)');
+     parseLocalCheckpoint(localStorage.getItem(workspaceLocalCheckpointKey(type)),type);
+    }
+    pendingStorageRepairs.delete(type);storageFallbackErrors.delete(type);storageClearError(type);
+    console.info('Naprawa zapisu '+(0,__dmImports["00-core"].workspaceLabel)(type)+' utrwalona i zweryfikowana.');
+   }catch(error){storageFallbackErrors.set(type,String(error?.message||error));updateStorageStatus();console.warn('Nie utrwalono naprawy '+(0,__dmImports["00-core"].workspaceLabel)(type)+': '+error.message)}
+  }
+ });
+ return __dmImports["09-storage-state"].dbWriteSequence;
 }
 function queueProjectDatabaseSave(snapshot=(0,__dmImports["09-storage-state"].projectSnapshot)(),immediate=false){
  if(!__dmImports["09-storage-state"].dbInitialized){if(__dmImports["09-storage-state"].bootFinished)__dmImports["09-storage-state"].dbTouchedBeforeLoad=true;return}
@@ -4264,8 +4320,8 @@ async function initializeProjectDatabase(){
      }catch(err){
       const recovered=storageBestCandidate([records[index]],type);
       if(recovered){loaded[type]={...recovered.project,jsonBackupDirty:true};databaseStamps[type]=recovered.updatedAt;__dmImports["09-storage-state"].dbWriteVersionByType[type]=Math.max(__dmImports["09-storage-state"].dbWriteVersionByType[type],recovered.updatedAt);repairDatabase.add(type);__dmImports["09-storage-state"].storageRecoveryWarning='Odzyskano poprawny zapis '+(0,__dmImports["00-core"].workspaceLabel)(type)+'. '+err.message}
-      else{__dmImports["00-core"].blockedWorkspaceTypes.add(type);storageSetError(type,err);__dmImports["09-storage-state"].storageRecoveryWarning='Uszkodzony zapis '+(0,__dmImports["00-core"].workspaceLabel)(type)+': '+err.message;}
-      console.warn(__dmImports["09-storage-state"].storageRecoveryWarning,err)
+      else{repairDatabase.add(type);__dmImports["00-core"].blockedWorkspaceTypes.add(type);storageSetError(type,err);__dmImports["09-storage-state"].storageRecoveryWarning='Uszkodzony zapis '+(0,__dmImports["00-core"].workspaceLabel)(type)+': '+err.message;}
+      if(recovered)console.info(__dmImports["09-storage-state"].storageRecoveryWarning);else console.warn(__dmImports["09-storage-state"].storageRecoveryWarning,err)
      }
     }
    }
@@ -4281,9 +4337,9 @@ async function initializeProjectDatabase(){
      __dmImports["09-storage-state"].dbWriteVersionByType[type]=Math.max(__dmImports["09-storage-state"].dbWriteVersionByType[type],best.stamp);
     }
    }catch(err){
-    invalidLocal=true;try{const raw=localStorage.getItem(workspaceLocalCheckpointKey(type));if(raw){try{JSON.parse(raw)}catch{localRevisions[type]=malformedLocalRevision(raw)}}}catch{};__dmImports["09-storage-state"].storageRecoveryWarning='Błąd kopii awaryjnej '+(0,__dmImports["00-core"].workspaceLabel)(type)+': '+err.message;console.warn(__dmImports["09-storage-state"].storageRecoveryWarning,err);
+    invalidLocal=true;try{const raw=localStorage.getItem(workspaceLocalCheckpointKey(type));if(raw){try{JSON.parse(raw)}catch{localRevisions[type]=malformedLocalRevision(raw)}}}catch{};__dmImports["09-storage-state"].storageRecoveryWarning='Błąd kopii awaryjnej '+(0,__dmImports["00-core"].workspaceLabel)(type)+': '+err.message;
     try{const recovered=storageBestCandidate([JSON.parse(localStorage.getItem(workspaceLocalCheckpointKey(type)))],type);if(recovered)best={project:{...recovered.project,jsonBackupDirty:true},stamp:recovered.updatedAt}}catch{}
-    if(!best&&!loaded[type])storageSetError(type,err);
+    if(!best&&!loaded[type]){storageSetError(type,err);console.warn(__dmImports["09-storage-state"].storageRecoveryWarning,err)}else console.info('Kopia awaryjna '+(0,__dmImports["00-core"].workspaceLabel)(type)+' wymaga utrwalenia naprawy: '+err.message);
    }
    if(best&&(!loaded[type]||best.stamp>databaseStamps[type]))loaded[type]=best.project;
    if(best)__dmImports["09-storage-state"].dbWriteVersionByType[type]=Math.max(__dmImports["09-storage-state"].dbWriteVersionByType[type],best.stamp);
@@ -4333,12 +4389,9 @@ async function initializeProjectDatabase(){
   if((0,__dmImports["05-validation"].validProject)(__dmImports["06-core-state"].state)){
    // Utrwal odzyskane sloty również wtedy, gdy nie są aktualnie wyświetlane.
    // Zachowaj oryginał w rejected / rejectedLocal; zapis nadal sprawdza rewizję.
-   for(const type of repairLocal)if(storageWriteAllowed(type))saveFallback((0,__dmImports["09-storage-state"].projectSnapshot)(__dmImports["00-core"].workspaceMemory[type].state),type);
-   for(const type of repairDatabase)if(__dmImports["09-storage-state"].dbIsWorking&&storageWriteAllowed(type)&&type!==__dmImports["00-core"].activeProjectType){
-    const snapshot=(0,__dmImports["09-storage-state"].projectSnapshot)(__dmImports["00-core"].workspaceMemory[type].state),stamp=(0,__dmImports["09-storage-state"].projectWriteStamp)(type);
-    __dmImports["09-storage-state"].dbWriteSequence=__dmImports["09-storage-state"].dbWriteSequence.catch(()=>{}).then(()=>writeDatabaseSnapshot(snapshot,type,stamp)).catch(error=>storageSetError(type,error));
-   }
-   if(!__dmImports["00-core"].blockedWorkspaceTypes.has(__dmImports["00-core"].activeProjectType))queueProjectDatabaseSave((0,__dmImports["09-storage-state"].projectSnapshot)(),true);
+   for(const type of [...repairLocal,...repairDatabase])if(!__dmImports["00-core"].blockedWorkspaceTypes.has(type))pendingStorageRepairs.add(type);
+   queueStorageRepairs();
+   if(!__dmImports["00-core"].blockedWorkspaceTypes.has(__dmImports["00-core"].activeProjectType)&&!pendingStorageRepairs.has(__dmImports["00-core"].activeProjectType))queueProjectDatabaseSave((0,__dmImports["09-storage-state"].projectSnapshot)(),true);
    startActiveProjectTimer();restartSessionClock();
    if(__dmImports["09-storage-state"].storageRecoveryWarning)setTimeout(()=>toast(__dmImports["09-storage-state"].storageRecoveryWarning),100);
    (0,__dmImports["45-tutorial"].tutorialAutoStart)();
@@ -4446,7 +4499,7 @@ function projectVisibilityChanged(){
   }
   if(!storageFocused())return;
   if(!await acquireStorageWriter(true)){if(storageFocused())toast('Nie udało się przejąć zapisu. Przełącz kartę ponownie lub zapisz JSON.');return}
-  await synchronizeStorageProjects();storageRemoteNotice=false;
+  await synchronizeStorageProjects();await queueStorageRepairs();storageRemoteNotice=false;
   if(!storageFocused()){await releaseStorageWriter();return}
   if(!storageConflicts.has(__dmImports["00-core"].activeProjectType)&&!__dmImports["00-core"].blockedWorkspaceTypes.has(__dmImports["00-core"].activeProjectType)&&!storageUncommitted.has(__dmImports["00-core"].activeProjectType))storageWarningShown=false;
  }).catch(async error=>{console.warn('Przekazanie zapisu',error);storageConflict(__dmImports["00-core"].activeProjectType);await releaseStorageWriter()}).finally(()=>{
@@ -4583,6 +4636,8 @@ async function readStorageRecovery(type){
  if(result.local)try{localRecord=JSON.parse(result.local);parseLocalCheckpoint(result.local,type)}catch(e){result.errors.push('localStorage: '+e.message)}
  if(result.database)try{storageValidatedEntry(result.database,type)}catch(e){result.errors.push('IndexedDB: '+e.message)}
  if(storageSaveErrors.has(type))result.errors.push(storageSaveErrors.get(type));
+ if(storageFallbackErrors.has(type))result.errors.push(storageFallbackErrors.get(type));
+ if(pendingStorageRepairs.has(type))result.errors.push('Naprawa oczekuje na trwały zapis.');
  if(__dmImports["00-core"].blockedWorkspaceTypes.has(type)||storageConflicts.has(type))result.errors.push('Zapis chroniony przed nadpisaniem.');
  const seen=new Set();
  const copies=[...storageCandidates(result.database,type),...storageCandidates(localRecord,type)].sort((a,b)=>b.updatedAt-a.updatedAt).filter(entry=>{const f=(0,__dmImports["09-storage-state"].projectFingerprint)(entry.project);if(seen.has(f))return false;seen.add(f);return true}).slice(0,6);
