@@ -76,7 +76,7 @@ html[data-theme="dark"] .empty-lane-name::selection{background:#b5d6f2;color:#14
  --dm-mini-graph-min-width:210px;
  --dm-mini-graph-min-height:94px;
  --dm-scrollbar-size:15px;
- --dm-rail-width:var(--dm-scrollbar-size);
+ --dm-rail-width:var(--chapter-insert-gap);
  --dm-guide-color:rgba(122,150,181,.43);
 }
 html[data-theme="light"]{--dm-guide-color:rgba(80,107,138,.37);}.board-shift{padding:0 var(--dm-board-inset);min-height:100%;}.moment, .gaprow{display:grid;gap:3px;}.moment{min-height:61px;align-items:stretch;}.moment + .gaprow{margin-top:0;}.gaprow{height:var(--chapter-insert-gap);position:relative;}.gaprow:hover{background:#eef5fd;}.gap-split{position:relative;z-index:8;width:21px;height:var(--chapter-insert-gap);min-width:0;padding:0;display:grid;place-items:center;border:0;border-radius:3px;background:transparent;color:#819bb9;font-weight:700;opacity:.57;cursor:pointer;}.gaprow:hover .gap-split, .gap-split:hover, .gap-split:focus-visible{opacity:1;color:#265c9c;background:#cfe5ff;}.split-highlight{position:absolute;left:0;right:0;height:var(--chapter-insert-gap);background:rgba(194,219,250,.72);border-top:1px solid #80a9df;border-bottom:1px solid #80a9df;pointer-events:none;z-index:7;}.gap-place{height:var(--chapter-insert-gap);min-width:0;cursor:crosshair;border-radius:3px;position:relative;}.gap-place:hover{background:#e6f0fc;}.gap-place:hover:after{content:"";position:absolute;top:calc((var(--chapter-insert-gap) - 2px)/2);left:3px;right:3px;border-top:2px solid #8eabda;}.cell{min-width:0;min-height:57px;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:1px 2px;cursor:crosshair;border-radius:5px;}.cell.drop, .gap-place.drop{background:#f5eddb!important;outline:2px dashed #b19b77;outline-offset:-2px;}.cell:hover{background:#f0f6fe;}.cell:not(:has(.tile)){background:transparent;}.cell:not(:has(.tile)):hover{background:#f0f6fe;}.cell:not(:has(.tile)):hover::after{content:"＋";font-size:15px;color:#93b0ce;display:grid;place-items:center;flex:1;pointer-events:none;}
@@ -2786,8 +2786,7 @@ html[data-theme="light"] .graph-mode-active .graph-project{
 }
 html[data-theme="light"] .graph-node > .qa-tile-index, html[data-theme="light"] .tile > .grid-tile-index{background:var(--dm-light-tile-fill);}
 
-/* v2.1.21: wymiary szyn wynikają z rzeczywistego guttera pionowego scrollbara.
-   Wspólne natywne kolory, bez powiązania z odstępem zdarzeń. */
+/* Scrollbary korzystają z natywnego guttera; szyna rozdziałów ma szerokość podglądu wstawienia. */
 :root{--dm-scroll-track:#b8b8b8;--dm-scroll-thumb:#737373;}
 html[data-theme="dark"]{--dm-scroll-track:#1b2a3b;--dm-scroll-thumb:#61748d;}
 html .app :is(.upper-scroll,.h-rail,.dock-scroll){scrollbar-width:auto;scrollbar-color:var(--dm-scroll-thumb) var(--dm-scroll-track);}
@@ -2806,9 +2805,9 @@ html .upper-shell.grid-rail-integrated :is(.grid-rail-head,.grid-rail-scroll-spa
 html .upper-shell:is(.graph-rail-integrated,.grid-rail-integrated)::before{
  background-image:linear-gradient(var(--dm-scroll-track),var(--dm-scroll-track)),linear-gradient(var(--dm-scroll-track),var(--dm-scroll-track)),linear-gradient(var(--graph-frame-edge,var(--grid-rail-edge)),var(--graph-frame-edge,var(--grid-rail-edge)));
 }
-html .upper-shell.graph-rail-integrated :is(.graph-rail-boundary-add,.graph-rail-selection button),html .upper-shell.grid-rail-integrated .grid-rail-add{width:var(--dm-scrollbar-size);min-width:0;max-width:100%;color:var(--dm-scroll-thumb);}
+html .upper-shell.graph-rail-integrated :is(.graph-rail-boundary-add,.graph-rail-selection button),html .upper-shell.grid-rail-integrated .grid-rail-add{width:var(--dm-rail-width);min-width:0;max-width:100%;color:var(--dm-scroll-thumb);}
 html .upper-shell.graph-rail-integrated .graph-rail-selection{left:0;right:0;}
-html .upper-shell.graph-rail-integrated :is(.graph-rail-boundary-add,.graph-rail-selection button) svg,html .upper-shell.grid-rail-integrated .grid-rail-add svg{width:73%;height:auto;max-height:var(--dm-scrollbar-size);}
+html .upper-shell.graph-rail-integrated :is(.graph-rail-boundary-add,.graph-rail-selection button) svg,html .upper-shell.grid-rail-integrated .grid-rail-add svg{width:73%;height:auto;max-height:var(--dm-rail-width);}
 
 /* Zachowaj kolor szyny także na końcach przewijania. */
 html .h-rail-grid{background:var(--dm-scroll-track);}
@@ -2935,7 +2934,7 @@ const GRAPH_LAYOUT_POLICY=Object.freeze({
  relationSlackWeight:1.25,wireSlackWeight:.09,
  compactIterations:65,compactStepThresholdPx:.015,compactCurrentWeight:.25,compactTargetWeight:.75
 });
-const APP_VERSION='2.2.5';
+const APP_VERSION='2.2.6';
 const APP_VERSION_DATE='2026-11-25';
 const THEME_STORAGE_KEY='drabinka-master-2-theme';
 let theme='dark';
@@ -3493,8 +3492,8 @@ function dockHeight(){
  return panelLayout.dockHidden?Math.round(Math.max(34,Math.min(panelLayout.dockNarrowHeight,75))):clampDockSize(panelLayout.dock);
 }
 function gridRailActive(){return !(0,__dmImports["20-motion-camera"].isGraphMode)()&&!__dmImports["10-validation-storage"].compactView&&state.orientation==='vertical'}
-function gridRailExtraWidth(){return gridRailActive()?(Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dm-graph-rail-width'))||15):0}
-function graphRailExtraWidth(){return (0,__dmImports["20-motion-camera"].isGraphMode)()&&(0,__dmImports["20-motion-camera"].graphChaptersVisible)()?Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dm-graph-rail-width'))||15:0}
+function gridRailExtraWidth(){return gridRailActive()?(Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dm-graph-rail-width'))||18):0}
+function graphRailExtraWidth(){return (0,__dmImports["20-motion-camera"].isGraphMode)()&&(0,__dmImports["20-motion-camera"].graphChaptersVisible)()?Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dm-graph-rail-width'))||18:0}
 function savePanelLayout(){
  collapsedChaptersByType[__dmImports["00-core"].activeProjectType]=[...collapsedChapters];
  try{localStorage.setItem(UI_LAYOUT_KEY,JSON.stringify({...panelLayout,collapsedChaptersByType}))}catch{}
@@ -8413,8 +8412,7 @@ function syncScrollbarSpace(){
  const exactSpace=first?Math.max(0,(sc.getBoundingClientRect().width-first.getBoundingClientRect().width)/zoom):fallbackSpace;
  const space=Math.abs(exactSpace-fallbackSpace)<=2?Math.round(exactSpace*1000)/1000:fallbackSpace;
  shell.style.setProperty('--scrollbar-space',space+'px');
- // Odczyt faktycznej szyny natywnej po każdym renderze/zmianie zoomu.
- // Nie wiążemy szerokości szyny rozdziałów z odstępem pomiędzy wydarzeniami.
+ // Odczyt natywnego scrollbara. Szyna rozdziałów ma niezależną szerokość podglądu.
  const size=space||15;
  const sizeValue=size+'px';
  if(document.documentElement.style.getPropertyValue('--dm-scrollbar-size')!==sizeValue){
